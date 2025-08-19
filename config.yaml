@@ -1,25 +1,25 @@
 # Paramètres du modèle
 model:
   in_channels: 4
-  hidden_channels: 64
+  hidden_channels: 32   # MODIFIÉ: Modèle plus petit pour un calcul plus rapide
   out_channels: 4
 
 # Paramètres de l'entraînement
 training:
-  epochs: 3
+  epochs: 50
   learning_rate: 0.001
-  weights_path: "weights/st_graph_sage_v1.pth"
-  batch_size: 32
-  num_batches_per_epoch: 100
-  loss_lambda: 0.5 # Poids pour la perte de classification semi-supervisée
+  weights_path: "weights/st_graph_sage_v1_light.pth" # Nom de poids différent
+  batch_size: 16        # MODIFIÉ: Batch plus petit pour moins de charge CPU/RAM
+  num_batches_per_epoch: 50 # MODIFIÉ: Époques plus courtes pour un feedback plus rapide
+  loss_lambda: 0.5
 
 # Paramètres des données
 data:
-  total_years: 4
-  train_years: 3
+  total_years: 2        # MODIFIÉ: Moins de données à générer et traiter
+  train_years: 1      # MODIFIÉ: Ajusté pour la nouvelle durée totale
   hourly_steps: 24
-  training_sequence_length: 72
+  training_sequence_length: 48 # MODIFIÉ: Séquences plus courtes pour accélérer le traitement
 
 # Paramètres de l'analyse d'anomalies
 analysis:
-  anomaly_threshold: 0.5 # Le seuil est sur le score de classification (0=normal, 1=anormal)
+  anomaly_threshold: 0.5

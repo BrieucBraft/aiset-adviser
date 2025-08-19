@@ -1,11 +1,9 @@
-# Fichier : utils/visualization.py
 import networkx as nx
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 
 def visualize_building_graph(graph: nx.Graph):
-    """Crée une visualisation de la topologie et l'enregistre dans un fichier HTML."""
     os.makedirs("reports", exist_ok=True)
     output_path = "reports/building_topology.html"
     pos = nx.spring_layout(graph, seed=42)
@@ -45,7 +43,6 @@ def visualize_building_graph(graph: nx.Graph):
     print(f"✅ Visualisation de la topologie enregistrée dans : {output_path}")
 
 def visualize_anomaly_scores(anomaly_scores, inv_node_mapping, threshold):
-    """Crée un bar chart pour visualiser les scores d'anomalie de chaque équipement."""
     os.makedirs("reports", exist_ok=True)
     output_path = "reports/anomaly_scores.html"
     
@@ -65,11 +62,7 @@ def visualize_anomaly_scores(anomaly_scores, inv_node_mapping, threshold):
     fig.write_html(output_path)
     print(f"✅ Scores d'anomalie enregistrés dans : {output_path}")
 
-# LA FONCTION EST MAINTENANT RENOMMÉE CORRECTEMENT
 def visualize_train_test_split(full_features, y_pred_unscaled, labels, train_idx, inv_node_mapping, feature_map):
-    """
-    Visualise les données, les prédictions superposées, les labels, et la séparation train/test.
-    """
     os.makedirs("reports", exist_ok=True)
     output_path = "reports/training_predictions.html"
     
@@ -84,7 +77,6 @@ def visualize_train_test_split(full_features, y_pred_unscaled, labels, train_idx
     for i in range(num_nodes):
         feature_index = 0
         
-        # Données réelles complètes (partie train)
         fig.add_trace(go.Scatter(
             y=full_features[i, :train_idx, feature_index], 
             name='Données d\'entraînement', 
@@ -92,7 +84,6 @@ def visualize_train_test_split(full_features, y_pred_unscaled, labels, train_idx
             line=dict(color='blue')
         ), row=i+1, col=1)
 
-        # Données réelles complètes (partie test)
         fig.add_trace(go.Scatter(
             x=list(range(train_idx, seq_length)), 
             y=full_features[i, train_idx:, feature_index], 
@@ -101,7 +92,6 @@ def visualize_train_test_split(full_features, y_pred_unscaled, labels, train_idx
             line=dict(color='deepskyblue')
         ), row=i+1, col=1)
         
-        # Prédictions sur TOUTE la période (avec décalage de 1)
         prediction_series = [None] + list(y_pred_unscaled[i, :, feature_index])
         fig.add_trace(go.Scatter(
             y=prediction_series, 
@@ -110,10 +100,8 @@ def visualize_train_test_split(full_features, y_pred_unscaled, labels, train_idx
             line=dict(color='orange', dash='dash')
         ), row=i+1, col=1)
 
-        # Ligne de séparation train/test
         fig.add_vline(x=train_idx, line_width=2, line_dash="dash", line_color="black", row=i+1, col=1)
 
-        # Marqueurs pour les labels
         labeled_points = (labels[i, :] != -1).nonzero(as_tuple=True)[0]
         if labeled_points.numel() > 0:
             normal_points = labeled_points[labels[i, labeled_points] == 0]

@@ -1,26 +1,21 @@
-# Fichier : models/st_graph_sage.py
 import torch
 import torch.nn as nn
 from torch_geometric.nn import SAGEConv
 
 class STGraphSAGE(nn.Module):
-    """Modèle Spatio-Temporel avec deux têtes de sortie pour l'apprentissage semi-supervisé."""
     def __init__(self, in_channels, hidden_channels, out_channels):
         super(STGraphSAGE, self).__init__()
-        # Couches partagées
         self.spatial_conv = SAGEConv(in_channels, hidden_channels)
         self.temporal_gru = nn.GRU(hidden_channels, hidden_channels)
         self.relu = nn.ReLU()
         
-        # Tête de sortie 1: Reconstruction
         self.reconstruction_head = nn.Linear(hidden_channels, out_channels)
         
-        # Tête de sortie 2: Classification (prédit un score d'anomalie)
         self.classification_head = nn.Sequential(
             nn.Linear(hidden_channels, hidden_channels // 2),
             nn.ReLU(),
             nn.Linear(hidden_channels // 2, 1),
-            nn.Sigmoid() # Pour borner le score entre 0 (normal) et 1 (anormal)
+            nn.Sigmoid()
         )
 
     def forward(self, x, edge_index):
