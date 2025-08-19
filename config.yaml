@@ -16,4 +16,4 @@ data:
 
 # Paramètres de l'analyse d'anomalies
 analysis:
-  anomaly_threshold: 0.05
+  anomaly_threshold: 0.015
