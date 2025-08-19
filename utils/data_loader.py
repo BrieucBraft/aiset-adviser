@@ -85,71 +85,73 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4, injec
         'Chiller': {'temp': [5, 8], 'pressure': [5, 7], 'flow': [90, 100], 'state': [0, 1]},
         'Boiler': {'temp': [60, 80], 'pressure': [1.5, 2], 'flow': [85, 95], 'state': [0, 1]},
         'Pump': {'temp': [0, 0], 'pressure': [1, 4], 'flow': [80, 100], 'state': [0, 1]},
-        'AHU': {'temp': [18, 22], 'pressure': [0.1, 0.2], 'flow': [1000, 1500], 'state': [0, 1]},
-        'VAV': {'temp': [20, 24], 'pressure': [0.05, 0.1], 'flow': [100, 300], 'state': [0, 1]}
+        'AHU': {'temp': [18, 22], 'pressure': [1.1, 1.2], 'flow': [1000, 1500], 'state': [0, 1]},
+        'VAV': {'temp': [20, 24], 'pressure': [0.9, 1.1], 'flow': [100, 300], 'state': [0, 1]}
     }
 
     for i, node_name in enumerate(nodes):
         node_type = graph.nodes[node_name]['type']
         r = ranges[node_type]
-        noise = lambda: np.random.randn(seq_length) * 0.05
-
-        state_signal = on_off_state * r['state'][1] + noise() * 0.1
+        
+        state_signal = on_off_state * r['state'][1] + (np.random.randn(seq_length) * 0.05) * 0.1
         features[i, :, 3] = np.clip(state_signal, r['state'][0], r['state'][1])
 
-        pressure_signal = features[i, :, 3] * (r['pressure'][0] + (r['pressure'][1] - r['pressure'][0]) * day_cycle) + noise()
-        flow_signal = features[i, :, 3] * (r['flow'][0] + (r['flow'][1] - r['flow'][0]) * day_cycle) + noise()
-        features[i, :, 1] = np.clip(pressure_signal, 0, r['pressure'][1] * 1.1)
-        features[i, :, 2] = np.clip(flow_signal, 0, r['flow'][1] * 1.1)
+        if node_type in ['AHU', 'VAV']:
+            # Use a more stable pressure for air-side equipment, less dependent on the daily cycle
+            stable_pressure = (r['pressure'][0] + r['pressure'][1]) / 2
+            pressure_noise = np.random.randn(seq_length) * 0.01  # Reduced noise
+            pressure_signal = features[i, :, 3] * stable_pressure + pressure_noise
+        else:
+            # Original logic for water-side equipment
+            pressure_noise = np.random.randn(seq_length) * 0.05
+            pressure_signal = features[i, :, 3] * (r['pressure'][0] + (r['pressure'][1] - r['pressure'][0]) * day_cycle) + pressure_noise
 
+        flow_noise = np.random.randn(seq_length) * 0.05
+        flow_signal = features[i, :, 3] * (r['flow'][0] + (r['flow'][1] - r['flow'][0]) * day_cycle) + flow_noise
+        
+        features[i, :, 1] = np.clip(pressure_signal, 0, r['pressure'][1] * 1.2)
+        features[i, :, 2] = np.clip(flow_signal, 0, r['flow'][1] * 1.2)
+
+        temp_noise = np.random.randn(seq_length) * 0.05
         if node_type in ['Chiller', 'Boiler', 'AHU', 'VAV']:
-            temp_signal = r['temp'][0] + (r['temp'][1] - r['temp'][0]) * day_cycle + noise()
+            temp_signal = r['temp'][0] + (r['temp'][1] - r['temp'][0]) * day_cycle + temp_noise
         elif node_type == 'Pump':
             source_nodes = list(graph.neighbors(node_name))
             if source_nodes:
-                # A more robust check for the source of the pump
-                source_node = None
-                for neighbor in source_nodes:
-                    if graph.nodes[neighbor]['type'] in ['Chiller', 'Boiler']:
-                        source_node = neighbor
-                        break
-                if source_node is None: # Default to first neighbor if no direct source
-                    source_node = source_nodes[0]
-                    
+                source_node = next((n for n in source_nodes if graph.nodes[n]['type'] in ['Chiller', 'Boiler']), source_nodes[0])
                 source_type = graph.nodes[source_node]['type']
                 source_range = ranges.get(source_type, {'temp': [20, 20]})
-                temp_signal = source_range['temp'][0] + (source_range['temp'][1] - source_range['temp'][0]) * day_cycle + noise()
+                temp_signal = source_range['temp'][0] + (source_range['temp'][1] - source_range['temp'][0]) * day_cycle + temp_noise
             else:
-                temp_signal = np.full(seq_length, 20) + noise() # Default temp for isolated pump
-
+                temp_signal = np.full(seq_length, 20) + temp_noise
+        
         features[i, :, 0] = temp_signal
 
     if inject_anomaly:
-        boiler_to_affect = 'Boiler_01'
-        if boiler_to_affect in node_map:
-            pump_hw_index = node_map.get(boiler_to_affect)
+        # boiler_to_affect = 'Boiler_01'
+        # if boiler_to_affect in node_map:
+        #     pump_hw_index = node_map.get(boiler_to_affect)
+        #     start_anomaly = int(seq_length * 0.5)
+        #     end_anomaly = int(seq_length * 1)
+        #     features[pump_hw_index, start_anomaly:end_anomaly, 0] *= 0.0 # Pressure drop
+        #     features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.0 # Flow drop
+        #     features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.0 # Pressure drop
+        #     features[pump_hw_index, start_anomaly:end_anomaly, 3] *= 0.0 # Flow drop
+        #     print(f"🔧 Anomalie injectée sur '{boiler_to_affect}' (chute de pression/débit).")
+        # else:
+        #     print(f"⚠️  '{boiler_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
+
+        pump_to_affect = 'Pump_HW_03'
+        if pump_to_affect in node_map:
+            pump_hw_index = node_map.get(pump_to_affect)
             start_anomaly = int(seq_length * 0.5)
             end_anomaly = int(seq_length * 1)
             # Simulate a pressure/flow drop
-            # features[pump_hw_index, start_anomaly:end_anomaly, 0] *= 0.0 # Pressure drop
-            # features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.0 # Pressure drop
-            # features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.0 # Flow drop
-            #features[pump_hw_index, start_anomaly:end_anomaly, 3] *= 0.0 # Pressure drop
-            print(f"🔧 Anomalie injectée sur '{boiler_to_affect}' (chute de pression/débit).")
+            features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
+            features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
+            print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
         else:
-            print(f"⚠️  '{boiler_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
-        # pump_to_affect = 'Pump_HW_03'
-        # if pump_to_affect in node_map:
-        #     pump_hw_index = node_map.get(pump_to_affect)
-        #     start_anomaly = int(seq_length * 0.55)
-        #     end_anomaly = int(seq_length * 0.95)
-        #     # Simulate a pressure/flow drop
-        #     features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
-        #     features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
-        #     print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
-        # else:
-        #     print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
-
+            print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
 
     return features
 
@@ -168,7 +170,6 @@ def generate_test_data_with_anomaly(seq_length=48, num_features=4):
     test_features = generate_sample_time_series_data(test_graph, seq_length, num_features, inject_anomaly=True)
     print("✅ Données de test générées (avec anomalie).")
     return test_graph, test_features
-
 
 def standardize_features(features_tensor):
     """
