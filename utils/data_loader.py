@@ -5,49 +5,71 @@ import numpy as np
 import torch
 
 def create_hvac_building_graph():
-    """Crée un exemple de graphe NetworkX pour un système CVC simple (journée normale pour l'entraînement)."""
+    """Crée un graphe NetworkX complexe pour un système CVC avec chauffage et refroidissement."""
     G = nx.Graph()
-    
+
     equipments = {
         'Chiller_01': {'type': 'Chiller'},
-        'Pump_CW_01': {'type': 'Pump'},   # Chilled Water Pump
-        'Pump_HW_01': {'type': 'Pump'},   # Hot Water Pump
+        'Chiller_02': {'type': 'Chiller'},
+        'Boiler_01': {'type': 'Boiler'},
+        'Boiler_02': {'type': 'Boiler'},
+        'Pump_CW_01': {'type': 'Pump'},  # Chilled Water Pump
+        'Pump_CW_02': {'type': 'Pump'},
+        'Pump_HW_01': {'type': 'Pump'},  # Hot Water Pump
+        'Pump_HW_02': {'type': 'Pump'},
         'AHU_01': {'type': 'AHU'},       # Air Handling Unit
+        'AHU_02': {'type': 'AHU'},
         'VAV_Zone_N': {'type': 'VAV'},     # North Zone
+        'VAV_Zone_S': {'type': 'VAV'},
+        'VAV_Zone_E': {'type': 'VAV'},
+        'VAV_Zone_W': {'type': 'VAV'},
     }
     for name, attrs in equipments.items():
         G.add_node(name, **attrs)
 
     edges = [
+        # Chilled water loop
         ('Chiller_01', 'Pump_CW_01'), ('Pump_CW_01', 'AHU_01'),
-        ('Pump_HW_01', 'AHU_01'), ('AHU_01', 'VAV_Zone_N')
+        ('Chiller_02', 'Pump_CW_02'), ('Pump_CW_02', 'AHU_02'),
+
+        # Hot water loop
+        ('Boiler_01', 'Pump_HW_01'), ('Pump_HW_01', 'AHU_01'),
+        ('Boiler_02', 'Pump_HW_02'), ('Pump_HW_02', 'AHU_02'),
+
+        # Air distribution
+        ('AHU_01', 'VAV_Zone_N'), ('AHU_01', 'VAV_Zone_W'),
+        ('AHU_02', 'VAV_Zone_S'), ('AHU_02', 'VAV_Zone_E'),
+        
+        # Cross-connection
+        ('AHU_01', 'AHU_02')
     ]
     G.add_edges_from(edges)
-    
+
     return G
 
 def create_hvac_building_graph_test():
-    """Crée un nouveau graphe pour le test avec une topologie différente."""
+    """Crée un nouveau graphe de test complexe avec une topologie différente."""
     G = nx.Graph()
-    
+
     equipments = {
         'Boiler_01': {'type': 'Boiler'},
-        'Pump_HW_02': {'type': 'Pump'},
-        'AHU_02': {'type': 'AHU'},
-        'VAV_Zone_S': {'type': 'VAV'},
-        'VAV_Zone_E': {'type': 'VAV'},
+        'Pump_HW_03': {'type': 'Pump'},
+        'Boiler_02': {'type': 'Boiler'},
+        'Pump_HW_04': {'type': 'Pump'},
+        'AHU_03': {'type': 'AHU'},
+        'VAV_Zone_Office_01': {'type': 'VAV'},
+        'VAV_Zone_Meeting_01': {'type': 'VAV'},
     }
     for name, attrs in equipments.items():
         G.add_node(name, **attrs)
 
     edges = [
-        ('Boiler_01', 'Pump_HW_02'), 
-        ('Pump_HW_02', 'AHU_02'),
-        ('AHU_02', 'VAV_Zone_S'),
-        ('AHU_02', 'VAV_Zone_E'),
+        ('Boiler_01', 'Pump_HW_03'), ('Pump_HW_03', 'AHU_03'),
+        ('Boiler_02', 'Pump_HW_04'), ('Pump_HW_04', 'AHU_03'),
+        ('AHU_03', 'VAV_Zone_Office_01'), ('AHU_03', 'VAV_Zone_Meeting_01'),
     ]
     G.add_edges_from(edges)
-    
+
     return G
 
 def generate_sample_time_series_data(graph, seq_length=48, num_features=4, inject_anomaly=False):
@@ -58,7 +80,7 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4, injec
     time = np.linspace(0, 2 * np.pi, seq_length)
     day_cycle = 0.5 * (1 - np.cos(time))
     on_off_state = (day_cycle > 0.5).astype(float)
-    
+
     ranges = {
         'Chiller': {'temp': [5, 8], 'pressure': [5, 7], 'flow': [90, 100], 'state': [0, 1]},
         'Boiler': {'temp': [60, 80], 'pressure': [1.5, 2], 'flow': [85, 95], 'state': [0, 1]},
@@ -71,43 +93,64 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4, injec
         node_type = graph.nodes[node_name]['type']
         r = ranges[node_type]
         noise = lambda: np.random.randn(seq_length) * 0.05
-        
+
         state_signal = on_off_state * r['state'][1] + noise() * 0.1
         features[i, :, 3] = np.clip(state_signal, r['state'][0], r['state'][1])
-        
+
         pressure_signal = features[i, :, 3] * (r['pressure'][0] + (r['pressure'][1] - r['pressure'][0]) * day_cycle) + noise()
         flow_signal = features[i, :, 3] * (r['flow'][0] + (r['flow'][1] - r['flow'][0]) * day_cycle) + noise()
         features[i, :, 1] = np.clip(pressure_signal, 0, r['pressure'][1] * 1.1)
         features[i, :, 2] = np.clip(flow_signal, 0, r['flow'][1] * 1.1)
-        
+
         if node_type in ['Chiller', 'Boiler', 'AHU', 'VAV']:
             temp_signal = r['temp'][0] + (r['temp'][1] - r['temp'][0]) * day_cycle + noise()
         elif node_type == 'Pump':
-            # Simplified temperature logic for pumps
-            # A more realistic model would trace the fluid path
-            source_node = list(graph.neighbors(node_name))[0]
-            source_idx = node_map[source_node]
-            source_type = graph.nodes[source_node]['type']
-            source_range = ranges[source_type]
-            temp_signal = source_range['temp'][0] + (source_range['temp'][1] - source_range['temp'][0]) * day_cycle + noise()
-        
+            source_nodes = list(graph.neighbors(node_name))
+            if source_nodes:
+                # A more robust check for the source of the pump
+                source_node = None
+                for neighbor in source_nodes:
+                    if graph.nodes[neighbor]['type'] in ['Chiller', 'Boiler']:
+                        source_node = neighbor
+                        break
+                if source_node is None: # Default to first neighbor if no direct source
+                    source_node = source_nodes[0]
+                    
+                source_type = graph.nodes[source_node]['type']
+                source_range = ranges.get(source_type, {'temp': [20, 20]})
+                temp_signal = source_range['temp'][0] + (source_range['temp'][1] - source_range['temp'][0]) * day_cycle + noise()
+            else:
+                temp_signal = np.full(seq_length, 20) + noise() # Default temp for isolated pump
+
         features[i, :, 0] = temp_signal
 
     if inject_anomaly:
-        # Inject anomaly on a pump in the test graph
-        pump_to_affect = 'Pump_HW_02' 
-        if pump_to_affect in node_map:
-            pump_hw_index = node_map.get(pump_to_affect)
-            start_anomaly = int(seq_length * 0.55)
-            end_anomaly = int(seq_length * 0.95)
+        boiler_to_affect = 'Boiler_01'
+        if boiler_to_affect in node_map:
+            pump_hw_index = node_map.get(boiler_to_affect)
+            start_anomaly = int(seq_length * 0.5)
+            end_anomaly = int(seq_length * 1)
             # Simulate a pressure/flow drop
-            features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
-            features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
-            print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
+            # features[pump_hw_index, start_anomaly:end_anomaly, 0] *= 0.0 # Pressure drop
+            # features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.0 # Pressure drop
+            # features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.0 # Flow drop
+            #features[pump_hw_index, start_anomaly:end_anomaly, 3] *= 0.0 # Pressure drop
+            print(f"🔧 Anomalie injectée sur '{boiler_to_affect}' (chute de pression/débit).")
         else:
-            print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
+            print(f"⚠️  '{boiler_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
+        # pump_to_affect = 'Pump_HW_03'
+        # if pump_to_affect in node_map:
+        #     pump_hw_index = node_map.get(pump_to_affect)
+        #     start_anomaly = int(seq_length * 0.55)
+        #     end_anomaly = int(seq_length * 0.95)
+        #     # Simulate a pressure/flow drop
+        #     features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
+        #     features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
+        #     print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
+        # else:
+        #     print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
 
-        
+
     return features
 
 def generate_training_data(seq_length=48, num_features=4):
@@ -130,26 +173,15 @@ def generate_test_data_with_anomaly(seq_length=48, num_features=4):
 def standardize_features(features_tensor):
     """
     Standardise les caractéristiques (features) pour avoir une moyenne de 0 et un écart-type de 1.
-    Le calcul se fait par caractéristique (colonne), sur tous les nœuds et tout le temps.
-    
-    Args:
-        features_tensor (torch.Tensor): Le tenseur des données brutes.
-    
-    Returns:
-        torch.Tensor: Le tenseur des données standardisées.
-        dict: Le "scaler" contenant les moyennes et écart-types pour chaque feature.
     """
-    # Calculer la moyenne et l'écart-type pour chaque feature (dimension 2)
-    # en les agrégeant sur les dimensions des nœuds (0) et du temps (1)
     mean = torch.mean(features_tensor, dim=(0, 1))
     std = torch.std(features_tensor, dim=(0, 1))
-    
-    # Éviter la division par zéro si une feature est constante
+
     std[std == 0] = 1
-    
+
     scaler = {'mean': mean, 'std': std}
     standardized_features = (features_tensor - mean) / std
-    
+
     print("✅ Données standardisées (moyenne=0, écart-type=1).")
     return standardized_features, scaler
 
