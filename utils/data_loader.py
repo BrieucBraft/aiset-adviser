@@ -69,11 +69,12 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4):
 
     pump_hw_index = node_map.get('Pump_HW_01')
     if pump_hw_index is not None:
-        start_anomaly = int(seq_length * 0.65)
-        end_anomaly = int(seq_length * 0.85)
-        features[pump_hw_index, start_anomaly:end_anomaly, 3] = 1.0 
-        features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.2 
-        features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.15
+        start_anomaly = int(seq_length * 0.55)
+        end_anomaly = int(seq_length * 0.95)
+        # features[pump_hw_index, start_anomaly:end_anomaly, 3] = 0.0 
+        # features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.0 
+        # features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.00
+        features[pump_hw_index, start_anomaly:end_anomaly, 0] = 0.00
         print("🔧 Anomalie injectée sur 'Pump_HW_01' (chute de pression/débit).")
         
     return features
