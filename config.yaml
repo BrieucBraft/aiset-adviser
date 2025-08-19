@@ -6,20 +6,20 @@ model:
 
 # Paramètres de l'entraînement
 training:
-  epochs: 50
-  learning_rate: 0.001
+  epochs: 10
+  learning_rate: 0.01
   weights_path: "weights/st_graph_sage_v1_light.pth" # Nom de poids différent
   batch_size: 16        # MODIFIÉ: Batch plus petit pour moins de charge CPU/RAM
   num_batches_per_epoch: 50 # MODIFIÉ: Époques plus courtes pour un feedback plus rapide
-  loss_lambda: 0.5
+  loss_lambda: 0.1
 
 # Paramètres des données
 data:
-  total_years: 2        # MODIFIÉ: Moins de données à générer et traiter
-  train_years: 1      # MODIFIÉ: Ajusté pour la nouvelle durée totale
+  total_years: 4        # MODIFIÉ: Moins de données à générer et traiter
+  train_years: 3      # MODIFIÉ: Ajusté pour la nouvelle durée totale
   hourly_steps: 24
   training_sequence_length: 48 # MODIFIÉ: Séquences plus courtes pour accélérer le traitement
 
 # Paramètres de l'analyse d'anomalies
 analysis:
-  anomaly_threshold: 0.5
+  anomaly_threshold: 0.1
