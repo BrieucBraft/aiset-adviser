@@ -85,4 +85,5 @@ def visualize_building(graph: nx.Graph):
                     )
     
     print("🚀 Affichage de la visualisation interactive...")
-    fig.show()
+    fig.write_html("my_interactive_plot.html")
+    # fig.show()

@@ -88,4 +88,4 @@ if __name__ == '__main__':
     )
 
     print("✅ Modèle STGraphSAGE backend initialisé avec succès.")
-    print(model)
+    # print(model)

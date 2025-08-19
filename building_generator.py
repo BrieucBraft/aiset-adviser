@@ -107,7 +107,7 @@ if __name__ == '__main__':
         # y_true sont les valeurs réelles que le modèle essayait de prédire
         y_true = node_features_tensor[:, 1:, :]
 
-    print(f"\nPrédiction finale après entraînement. Shape: {y_pred}")
+    print(f"\nPrédiction finale après entraînement. Shape: {y_pred.shape}")
     
     # #############################################################################
     # ### 7. Interprétation des Résultats (ANALYSE DES ANOMALIES) - VOTRE CODE ICI ###
@@ -123,7 +123,7 @@ if __name__ == '__main__':
     # Interprétation
     # NOTE : Ce seuil est arbitraire. En pratique, il doit être déterminé
     # en analysant l'erreur de reconstruction sur un jeu de données de validation.
-    seuil_anomalie = 0.01  
+    seuil_anomalie = 0.012  
     
     noeuds_anormaux_indices = torch.where(erreur_par_noeud > seuil_anomalie)[0]
     
