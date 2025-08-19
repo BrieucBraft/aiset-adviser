@@ -67,7 +67,7 @@ def visualize_building(graph: nx.Graph):
     node_trace.text = [node_id for node_id in graph.nodes()]
     node_trace.hovertext = node_text
 
-    # 4. Créer la figure et l'afficher (AVEC LA CORRECTION)
+    # 4. Créer la figure et l'afficher
     fig = go.Figure(data=[edge_trace, node_trace],
                  layout=go.Layout(
                     # Le titre est maintenant un dictionnaire qui contient le texte et la police
