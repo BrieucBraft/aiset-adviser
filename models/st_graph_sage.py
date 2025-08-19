@@ -35,11 +35,10 @@ class STGraphSAGE(nn.Module):
             temporal_output, h = self.temporal_gru(r_in, h)
             hidden_state_t = temporal_output.squeeze(0)
             
-            # Passer l'état caché dans les deux têtes
             reconstructions.append(self.reconstruction_head(hidden_state_t))
             classifications.append(self.classification_head(hidden_state_t))
             
         reconstruction_output = torch.stack(reconstructions, dim=1)
-        classification_output = torch.stack(classifications, dim=1).squeeze(-1) # Enlever la dernière dimension
+        classification_output = torch.stack(classifications, dim=1).squeeze(-1)
         
         return reconstruction_output, classification_output

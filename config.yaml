@@ -6,16 +6,20 @@ model:
 
 # Paramètres de l'entraînement
 training:
-  epochs: 150 # Augmenté pour une meilleure convergence
-  learning_rate: 0.005
+  epochs: 3
+  learning_rate: 0.001
   weights_path: "weights/st_graph_sage_v1.pth"
-  train_split_ratio: 0.75 # 75% des données pour l'entraînement
-  loss_lambda: 0.2 # Poids pour la perte de classification semi-supervisée
+  batch_size: 32
+  num_batches_per_epoch: 100
+  loss_lambda: 0.5 # Poids pour la perte de classification semi-supervisée
 
 # Paramètres des données
 data:
-  sequence_length: 48
+  total_years: 4
+  train_years: 3
+  hourly_steps: 24
+  training_sequence_length: 72
 
 # Paramètres de l'analyse d'anomalies
 analysis:
-  anomaly_threshold: 0.05
+  anomaly_threshold: 0.5 # Le seuil est sur le score de classification (0=normal, 1=anormal)
