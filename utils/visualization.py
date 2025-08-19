@@ -51,12 +51,14 @@ def visualize_building_graph(graph: nx.Graph):
     fig.write_html(output_path)
     print(f"✅ Visualisation de la topologie enregistrée dans : {output_path}")
 
-def visualize_predictions_and_errors(y_true, y_pred, inv_node_mapping, feature_map):
-    """Visualise les données, les prédictions et l'erreur pour CHAQUE feature et l'enregistre."""
+def visualize_training_data(full_features, y_pred_unscaled, inv_node_mapping, feature_map):
+    """
+    Visualise la séquence d'entraînement complète (entrée + cible) et superpose les prédictions.
+    """
     os.makedirs("reports", exist_ok=True)
-    output_path = "reports/predictions_analysis.html"
+    output_path = "reports/training_predictions.html"
     
-    num_nodes, seq_length, num_features = y_true.shape
+    num_nodes, seq_length, num_features = full_features.shape
     
     fig = make_subplots(
         rows=num_nodes, cols=num_features,
@@ -64,38 +66,42 @@ def visualize_predictions_and_errors(y_true, y_pred, inv_node_mapping, feature_m
         subplot_titles=[f"{inv_node_mapping[i]} - {feature_map[j]}" for i in range(num_nodes) for j in range(num_features)]
     )
     
-    for i in range(num_nodes): # Pour chaque équipement
-        for j in range(num_features): # Pour chaque feature
-            # Extraire les séries temporelles pour ce noeud et cette feature
-            true_series = y_true[i, :, j]
-            pred_series = y_pred[i, :, j]
+    for i in range(num_nodes):
+        for j in range(num_features):
+            # Afficher la séquence complète des données réelles
+            fig.add_trace(go.Scatter(y=full_features[i, :, j], name='Données réelles', mode='lines', line=dict(color='blue'), showlegend=False), row=i+1, col=j+1)
             
-            # Calculer l'erreur pour cette série spécifique
-            error_series = (true_series - pred_series) ** 2
-            
-            # Ajouter les traces au bon sous-graphique
-            fig.add_trace(go.Scatter(y=true_series, name='Réel', mode='lines', line=dict(color='blue'), showlegend=(i==0 and j==0)), row=i+1, col=j+1)
-            fig.add_trace(go.Scatter(y=pred_series, name='Prédiction', mode='lines', line=dict(color='orange', dash='dash'), showlegend=(i==0 and j==0)), row=i+1, col=j+1)
-            
-            # Créer un axe Y secondaire pour l'erreur
-            fig.add_trace(go.Scatter(y=error_series, name='Erreur (MSE)', mode='lines', line=dict(color='rgba(255, 0, 0, 0.6)'), yaxis=f"y{i*num_features+j+num_nodes*num_features+1}", showlegend=(i==0 and j==0)), row=i+1, col=j+1)
-            
-            # Configurer l'axe Y secondaire
-            fig.update_layout({
-                f'yaxis{i*num_features+j+num_nodes*num_features+1}': {
-                    'overlaying': f'y{i*num_features+j+1}',
-                    'side': 'right',
-                    'showgrid': False,
-                    'zeroline': False,
-                    'showticklabels': False
-                }
-            })
+            # Superposer les prédictions avec un décalage de 1 (car on prédit T+1)
+            # On ajoute un 'None' au début pour que la série commence au bon endroit
+            prediction_series = [None] + list(y_pred_unscaled[i, :, j])
+            fig.add_trace(go.Scatter(y=prediction_series, name='Prédiction', mode='lines', line=dict(color='orange', dash='dash'), showlegend=False), row=i+1, col=j+1)
 
-    fig.update_layout(height=250*num_nodes, title_text="📈 Analyse Détaillée par Équipement et Caractéristique")
-    
-    # Mettre à jour les axes Y principaux
-    for i in range(1, num_nodes * num_features + 1):
-        fig.update_yaxes(row=(i-1)//num_features + 1, col=(i-1)%num_features + 1, showgrid=False, zeroline=False)
-
+    fig.update_layout(height=250*num_nodes, title_text="📈 Visualisation des Données d'Entraînement et Prédictions")
     fig.write_html(output_path)
-    print(f"✅ Analyse détaillée des prédictions enregistrée dans : {output_path}")
+    print(f"✅ Visualisation des données d'entraînement enregistrée dans : {output_path}")
+
+
+def visualize_anomaly_scores(error_per_node, inv_node_mapping, threshold):
+    """
+    Crée un bar chart pour visualiser les scores d'anomalie de chaque équipement.
+    """
+    os.makedirs("reports", exist_ok=True)
+    output_path = "reports/anomaly_scores.html"
+    
+    node_names = [inv_node_mapping[i] for i in range(len(error_per_node))]
+    scores = error_per_node.detach().numpy()
+    colors = ['red' if score > threshold else 'green' for score in scores]
+    
+    fig = go.Figure([go.Bar(x=node_names, y=scores, marker_color=colors)])
+    
+    # Ajouter la ligne de seuil
+    fig.add_shape(type="line", x0=-0.5, y0=threshold, x1=len(node_names)-0.5, y1=threshold,
+                  line=dict(color="orange", width=2, dash="dash"))
+    
+    fig.update_layout(
+        title="📊 Scores d'Anomalie par Équipement",
+        xaxis_title="Équipement",
+        yaxis_title="Erreur de Reconstruction (MSE Pondérée)",
+    )
+    fig.write_html(output_path)
+    print(f"✅ Scores d'anomalie enregistrés dans : {output_path}")
