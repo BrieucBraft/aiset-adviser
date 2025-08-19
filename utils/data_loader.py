@@ -147,8 +147,8 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4, injec
             start_anomaly = int(seq_length * 0.5)
             end_anomaly = int(seq_length * 1)
             # Simulate a pressure/flow drop
-            features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
-            features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
+            # features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
+            # features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
             print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
         else:
             print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
