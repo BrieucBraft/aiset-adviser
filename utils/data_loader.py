@@ -79,30 +79,36 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4):
     return features
 
 def standardize_features(features_tensor):
-    """
-    Standardise les caractéristiques (features) pour avoir une moyenne de 0 et un écart-type de 1.
-    Le calcul se fait par caractéristique (colonne), sur tous les nœuds et tout le temps.
-    
-    Args:
-        features_tensor (torch.Tensor): Le tenseur des données brutes.
-    
-    Returns:
-        torch.Tensor: Le tenseur des données standardisées.
-        dict: Le "scaler" contenant les moyennes et écart-types pour chaque feature.
-    """
-    # Calculer la moyenne et l'écart-type pour chaque feature (dimension 2)
-    # en les agrégeant sur les dimensions des nœuds (0) et du temps (1)
+    """Standardise les caractéristiques."""
     mean = torch.mean(features_tensor, dim=(0, 1))
     std = torch.std(features_tensor, dim=(0, 1))
-    
-    # Éviter la division par zéro si une feature est constante
     std[std == 0] = 1
-    
     scaler = {'mean': mean, 'std': std}
     standardized_features = (features_tensor - mean) / std
-    
     print("✅ Données standardisées (moyenne=0, écart-type=1).")
     return standardized_features, scaler
+
+def generate_labels(features, graph, anomaly_window):
+    """Génère des labels pour l'entraînement semi-supervisé."""
+    num_nodes, seq_length = features.shape[0], features.shape[1]
+    # -1: non-labélisé, 0: normal, 1: anormal
+    labels = -1 * np.ones((num_nodes, seq_length))
+    
+    # Marquer la fenêtre d'anomalie injectée comme "anormale"
+    pump_hw_index = list(graph.nodes()).index('Pump_HW_01')
+    start_anomaly, end_anomaly = anomaly_window
+    labels[pump_hw_index, start_anomaly:end_anomaly] = 1
+    
+    # Marquer quelques points aléatoires comme "normaux" pour guider le modèle
+    for _ in range(20): # 20 exemples normaux
+        node_idx = np.random.randint(0, num_nodes)
+        time_idx = np.random.randint(0, seq_length)
+        # S'assurer de ne pas écraser une anomalie
+        if labels[node_idx, time_idx] == -1:
+            labels[node_idx, time_idx] = 0
+            
+    print("🏷️  Labels générés pour l'entraînement semi-supervisé.")
+    return torch.tensor(labels, dtype=torch.float32)
 
 def prepare_data_for_model(graph, node_data):
     """Convertit les données du graphe en tenseurs PyTorch."""

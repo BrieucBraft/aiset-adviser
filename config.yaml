@@ -6,13 +6,15 @@ model:
 
 # Paramètres de l'entraînement
 training:
-  epochs: 100
+  epochs: 150 # Augmenté pour une meilleure convergence
   learning_rate: 0.005
   weights_path: "weights/st_graph_sage_v1.pth"
+  train_split_ratio: 0.75 # 75% des données pour l'entraînement
+  loss_lambda: 0.2 # Poids pour la perte de classification semi-supervisée
 
 # Paramètres des données
 data:
-  sequence_length: 48 # Longueur de la séquence (e.g., 48 x 30 min = 24h)
+  sequence_length: 48
 
 # Paramètres de l'analyse d'anomalies
 analysis:

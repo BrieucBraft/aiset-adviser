@@ -105,3 +105,52 @@ def visualize_anomaly_scores(error_per_node, inv_node_mapping, threshold):
     )
     fig.write_html(output_path)
     print(f"✅ Scores d'anomalie enregistrés dans : {output_path}")
+
+def visualize_training_data(full_features, y_pred_unscaled, labels, train_idx, inv_node_mapping, feature_map):
+    """
+    Visualise les données, les prédictions, les labels, et la séparation train/test.
+    """
+    os.makedirs("reports", exist_ok=True)
+    output_path = "reports/training_predictions.html"
+    
+    num_nodes, seq_length, num_features = full_features.shape
+    
+    fig = make_subplots(
+        rows=num_nodes, cols=1,
+        shared_xaxes=True,
+        subplot_titles=[inv_node_mapping[i] for i in range(num_nodes)]
+    )
+    
+    for i in range(num_nodes):
+        # Afficher la première feature pour la clarté visuelle
+        feature_index = 0
+        
+        # Données réelles
+        fig.add_trace(go.Scatter(y=full_features[i, :, feature_index], name='Données réelles', mode='lines', line=dict(color='blue')), row=i+1, col=1)
+        
+        # Prédictions (avec décalage)
+        prediction_series = [None] * (train_idx + 1) + list(y_pred_unscaled[i, :, feature_index])
+        fig.add_trace(go.Scatter(y=prediction_series, name='Prédiction (Test)', mode='lines', line=dict(color='orange', dash='dash')), row=i+1, col=1)
+
+        # Ajouter la ligne de séparation train/test
+        fig.add_vline(x=train_idx, line_width=2, line_dash="dash", line_color="grey", row=i+1, col=1)
+
+        # Ajouter les marqueurs pour les labels
+        labeled_points = (labels[i, :] != -1).nonzero().squeeze()
+        for point_idx in labeled_points:
+            is_anomaly = labels[i, point_idx] == 1
+            fig.add_trace(go.Scatter(
+                x=[point_idx], y=[full_features[i, point_idx, feature_index]],
+                mode='markers',
+                marker=dict(
+                    color='red' if is_anomaly else 'green',
+                    symbol='x' if is_anomaly else 'circle',
+                    size=10,
+                    line=dict(width=2, color='black')
+                ),
+                name='Anomalie' if is_anomaly else 'Normal'
+            ), row=i+1, col=1)
+
+    fig.update_layout(height=250*num_nodes, title_text="📈 Visualisation Train/Test et Labels", showlegend=False)
+    fig.write_html(output_path)
+    print(f"✅ Visualisation des données d'entraînement enregistrée dans : {output_path}")
