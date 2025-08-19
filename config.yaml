@@ -12,7 +12,7 @@ training:
 
 # Paramètres des données
 data:
-  sequence_length: 48 # Longueur de la séquence (e.g., 48 x 30 min = 24h)
+  sequence_length: 24 # Longueur de la séquence (e.g., 48 x 30 min = 24h)
 
 # Paramètres de l'analyse d'anomalies
 analysis:

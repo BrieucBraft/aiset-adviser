@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 def create_hvac_building_graph():
-    """Crée un exemple de graphe NetworkX pour un système CVC simple."""
+    """Crée un exemple de graphe NetworkX pour un système CVC simple (journée normale pour l'entraînement)."""
     G = nx.Graph()
     
     equipments = {
@@ -26,7 +26,31 @@ def create_hvac_building_graph():
     
     return G
 
-def generate_sample_time_series_data(graph, seq_length=48, num_features=4):
+def create_hvac_building_graph_test():
+    """Crée un nouveau graphe pour le test avec une topologie différente."""
+    G = nx.Graph()
+    
+    equipments = {
+        'Boiler_01': {'type': 'Boiler'},
+        'Pump_HW_02': {'type': 'Pump'},
+        'AHU_02': {'type': 'AHU'},
+        'VAV_Zone_S': {'type': 'VAV'},
+        'VAV_Zone_E': {'type': 'VAV'},
+    }
+    for name, attrs in equipments.items():
+        G.add_node(name, **attrs)
+
+    edges = [
+        ('Boiler_01', 'Pump_HW_02'), 
+        ('Pump_HW_02', 'AHU_02'),
+        ('AHU_02', 'VAV_Zone_S'),
+        ('AHU_02', 'VAV_Zone_E'),
+    ]
+    G.add_edges_from(edges)
+    
+    return G
+
+def generate_sample_time_series_data(graph, seq_length=48, num_features=4, inject_anomaly=False):
     """Génère des données de séries temporelles réalistes pour un système CVC."""
     nodes = list(graph.nodes())
     node_map = {name: i for i, name in enumerate(nodes)}
@@ -59,6 +83,8 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4):
         if node_type in ['Chiller', 'Boiler', 'AHU', 'VAV']:
             temp_signal = r['temp'][0] + (r['temp'][1] - r['temp'][0]) * day_cycle + noise()
         elif node_type == 'Pump':
+            # Simplified temperature logic for pumps
+            # A more realistic model would trace the fluid path
             source_node = list(graph.neighbors(node_name))[0]
             source_idx = node_map[source_node]
             source_type = graph.nodes[source_node]['type']
@@ -67,17 +93,39 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4):
         
         features[i, :, 0] = temp_signal
 
-    pump_hw_index = node_map.get('Pump_HW_01')
-    if pump_hw_index is not None:
-        start_anomaly = int(seq_length * 0.55)
-        end_anomaly = int(seq_length * 0.95)
-        # features[pump_hw_index, start_anomaly:end_anomaly, 3] = 0.0 
-        # features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.0 
-        # features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.00
-        features[pump_hw_index, start_anomaly:end_anomaly, 0] = 0.00
-        print("🔧 Anomalie injectée sur 'Pump_HW_01' (chute de pression/débit).")
+    if inject_anomaly:
+        # Inject anomaly on a pump in the test graph
+        pump_to_affect = 'Pump_HW_02' 
+        if pump_to_affect in node_map:
+            pump_hw_index = node_map.get(pump_to_affect)
+            start_anomaly = int(seq_length * 0.55)
+            end_anomaly = int(seq_length * 0.95)
+            # Simulate a pressure/flow drop
+            features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1 # Pressure drop
+            features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1 # Flow drop
+            print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
+        else:
+            print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
+
         
     return features
+
+def generate_training_data(seq_length=48, num_features=4):
+    """Génère les données d'entraînement (journée normale, sans anomalie)."""
+    print("--- Génération des données d'entraînement ---")
+    graph = create_hvac_building_graph()
+    features = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=False)
+    print("✅ Données d'entraînement générées (sans anomalie).")
+    return graph, features
+
+def generate_test_data_with_anomaly(seq_length=48, num_features=4):
+    """Génère les données de test sur un nouveau graphe avec une anomalie."""
+    print("\n--- Génération des données de test ---")
+    test_graph = create_hvac_building_graph_test()
+    test_features = generate_sample_time_series_data(test_graph, seq_length, num_features, inject_anomaly=True)
+    print("✅ Données de test générées (avec anomalie).")
+    return test_graph, test_features
+
 
 def standardize_features(features_tensor):
     """
