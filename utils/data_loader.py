@@ -7,7 +7,16 @@ import glob
 import sys
 import random
 
-def load_and_generate_training_data(seq_length=48, num_features=4, anomaly_fraction=0.5):
+FEATURE_MAP = {
+    'VAV': ['Zone Temp (°C)', 'Damper Position (%)', 'Airflow (m³/s)', 'Temp Setpoint (°C)', 'Is Active'],
+    'AHU': ['Supply Temp (°C)', 'Static Pressure (Pa)', 'Airflow (m³/s)', 'Fan Speed (%)', 'Power Draw (kW)'],
+    'Pump': ['Supply Temp (°C)', 'Pressure Diff (kPa)', 'Flow Rate (m³/h)', 'Speed (%)', 'Power Draw (kW)'],
+    'Chiller': ['Supply Temp (°C)', 'Return Temp (°C)', 'Water Flow (m³/h)', 'Load (%)', 'Power Draw (kW)'],
+    'Boiler': ['Supply Temp (°C)', 'Return Temp (°C)', 'Water Flow (m³/h)', 'Load (%)', 'Power Draw (kW)']
+}
+NUM_FEATURES = 5
+
+def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.5):
     print("--- Chargement et génération des données d'entraînement ---")
     training_files = glob.glob("data/training/*.gpickle")
     
@@ -22,7 +31,7 @@ def load_and_generate_training_data(seq_length=48, num_features=4, anomaly_fract
         with open(file_path, "rb") as f:
             graph = pickle.load(f)
             inject_anomaly = random.random() < anomaly_fraction
-            features, labels = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=inject_anomaly)
+            features, labels = generate_realistic_time_series_data(graph, seq_length, inject_anomaly=inject_anomaly)
             
             all_graphs.append(graph)
             all_features.append(torch.tensor(features, dtype=torch.float32))
@@ -33,7 +42,7 @@ def load_and_generate_training_data(seq_length=48, num_features=4, anomaly_fract
             
     return all_graphs, all_features, all_labels
 
-def load_and_generate_test_data(seq_length=48, num_features=4):
+def load_and_generate_test_data(seq_length=96):
     print("\n--- Chargement et génération des données de test ---")
     test_file = "data/testing/test_graph_anomaly.gpickle"
 
@@ -44,82 +53,141 @@ def load_and_generate_test_data(seq_length=48, num_features=4):
 
     with open(test_file, "rb") as f:
         graph = pickle.load(f)
-        features, labels = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=True)
+        features, labels = generate_realistic_time_series_data(graph, seq_length, inject_anomaly=True)
         print(f"✅ Données de test générées pour {os.path.basename(test_file)}")
         return graph, torch.tensor(features, dtype=torch.float32), torch.tensor(labels, dtype=torch.float32)
 
-def generate_sample_time_series_data(graph, seq_length=48, num_features=4, inject_anomaly=False):
+def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=False):
     nodes = list(graph.nodes())
-    num_nodes = len(nodes)
     node_map = {name: i for i, name in enumerate(nodes)}
+    num_nodes = len(nodes)
     
-    features = np.zeros((num_nodes, seq_length, num_features))
+    features = np.full((num_nodes, seq_length, NUM_FEATURES), np.nan)
     anomaly_labels = np.zeros((num_nodes, seq_length, 1))
 
-    time = np.linspace(0, 2 * np.pi, seq_length)
-    day_cycle = 0.5 * (1 - np.cos(time))
-    on_off_state = (day_cycle > 0.5).astype(float)
+    setpoints = {'VAV_temp': 22.0, 'AHU_supply_temp_cool': 12.0, 'AHU_supply_temp_heat': 35.0, 
+                 'Chiller_supply_temp': 7.0, 'Boiler_supply_temp': 60.0}
 
-    ranges = {
-        'Chiller': {'temp': [5, 8], 'pressure': [5, 7], 'flow': [90, 100], 'state': [0, 1]},
-        'Boiler': {'temp': [60, 80], 'pressure': [1.5, 2], 'flow': [85, 95], 'state': [0, 1]},
-        'Pump': {'temp': [0, 0], 'pressure': [1, 4], 'flow': [80, 100], 'state': [0, 1]},
-        'AHU': {'temp': [18, 22], 'pressure': [1.1, 1.2], 'flow': [1000, 1500], 'state': [0, 1]},
-        'VAV': {'temp': [20, 24], 'pressure': [0.9, 1.1], 'flow': [100, 300], 'state': [0, 1]}
-    }
+    time_of_day = np.linspace(0, 24, seq_length)
+    occupancy = np.exp(-((time_of_day - 13.5)**2) / (2 * 2.5**2))
+    occupancy[time_of_day < 7] = 0
+    occupancy[time_of_day > 18] = 0
+    external_heat_load = occupancy * 8
+    
+    node_states = {node: {'temp': 18.0} for node in nodes}
 
-    for i, node_name in enumerate(nodes):
-        node_type = graph.nodes[node_name]['type']
-        r = ranges[node_type]
-        state_signal = on_off_state * r['state'][1] + (np.random.randn(seq_length) * 0.05) * 0.1
-        features[i, :, 3] = np.clip(state_signal, r['state'][0], r['state'][1])
-
-        if node_type in ['AHU', 'VAV']:
-            stable_pressure = (r['pressure'][0] + r['pressure'][1]) / 2
-            pressure_noise = np.random.randn(seq_length) * 0.01
-            pressure_signal = features[i, :, 3] * stable_pressure + pressure_noise
-        else:
-            pressure_noise = np.random.randn(seq_length) * 0.05
-            pressure_signal = features[i, :, 3] * (r['pressure'][0] + (r['pressure'][1] - r['pressure'][0]) * day_cycle) + pressure_noise
-
-        flow_noise = np.random.randn(seq_length) * 0.05
-        flow_signal = features[i, :, 3] * (r['flow'][0] + (r['flow'][1] - r['flow'][0]) * day_cycle) + flow_noise
-        
-        features[i, :, 1] = np.clip(pressure_signal, 0, r['pressure'][1] * 1.2)
-        features[i, :, 2] = np.clip(flow_signal, 0, r['flow'][1] * 1.2)
-
-        temp_noise = np.random.randn(seq_length) * 0.05
-        if node_type in ['Chiller', 'Boiler', 'AHU', 'VAV']:
-            temp_signal = r['temp'][0] + (r['temp'][1] - r['temp'][0]) * day_cycle + temp_noise
-        elif node_type == 'Pump':
-            source_nodes = list(graph.neighbors(node_name))
-            if source_nodes:
-                source_node = next((n for n in source_nodes if graph.nodes[n]['type'] in ['Chiller', 'Boiler']), source_nodes[0])
-                source_type = graph.nodes[source_node]['type']
-                source_range = ranges.get(source_type, {'temp': [20, 20]})
-                temp_signal = source_range['temp'][0] + (source_range['temp'][1] - source_range['temp'][0]) * day_cycle + temp_noise
-            else:
-                temp_signal = np.full(seq_length, 20) + temp_noise
-        features[i, :, 0] = temp_signal
-
+    anomaly_params = {'node': None, 'start_time': -1}
     if inject_anomaly:
-        possible_nodes = [node for node, data in graph.nodes(data=True) if data['type'] in ['Pump', 'Boiler', 'Chiller']]
-        if not possible_nodes:
-            possible_nodes = list(graph.nodes())
+        plant_nodes = [n for n, d in graph.nodes(data=True) if d['type'] in ['Pump', 'Chiller', 'Boiler']]
+        if plant_nodes:
+            anomaly_params['node'] = random.choice(plant_nodes)
+            anomaly_params['start_time'] = int(seq_length * (11/24.0)) # Anomaly starts at 11 AM
+            
+            node_idx = node_map[anomaly_params['node']]
+            anomaly_labels[node_idx, anomaly_params['start_time']:, 0] = 1.0
+            print(f"🔧 Anomalie programmée sur '{anomaly_params['node']}'.")
 
-        node_to_affect = random.choice(possible_nodes)
-        node_index = node_map.get(node_to_affect)
+    for t in range(seq_length):
+        is_occupied = occupancy[t] > 0.1
         
-        start_anomaly = int(seq_length * random.uniform(0.4, 0.6))
-        end_anomaly = int(seq_length * random.uniform(0.8, 1.0))
-        
-        features[node_index, start_anomaly:end_anomaly, 1] *= random.uniform(0.05, 0.2)
-        features[node_index, start_anomaly:end_anomaly, 2] *= random.uniform(0.05, 0.2)
-        anomaly_labels[node_index, start_anomaly:end_anomaly, 0] = 1.0
-        
-        print(f"🔧 Anomalie injectée sur '{node_to_affect}'.")
+        for node_name, data in graph.nodes(data=True):
+            if data['type'] == 'VAV':
+                idx = node_map[node_name]
+                current_temp = node_states[node_name]['temp']
+                temp_setpoint = setpoints['VAV_temp'] if is_occupied else 18.0
+                temp_error = current_temp - temp_setpoint
 
-    return features, anomaly_labels
+                damper_pos = min(100, max(0, 50 + temp_error * 25)) if is_occupied else 0
+                
+                ahu_name = next(graph.neighbors(node_name))
+                ahu_fan_speed = features[node_map[ahu_name], t-1, 3] if t > 0 else 0
+                airflow = (damper_pos / 100.0) * (ahu_fan_speed / 100.0) * 0.5
+
+                ahu_supply_temp = node_states[ahu_name].get('supply_temp', current_temp)
+                thermal_effect = (current_temp - ahu_supply_temp) * airflow * 0.2
+                current_temp += (external_heat_load[t] * 0.15) - thermal_effect + random.uniform(-0.1, 0.1)
+
+                node_states[node_name]['temp'] = current_temp
+                features[idx, t] = [current_temp, damper_pos, airflow, temp_setpoint, 1 if is_occupied else 0]
+
+        for node_name, data in graph.nodes(data=True):
+            if data['type'] == 'AHU':
+                idx = node_map[node_name]
+                connected_vavs = [n for n in graph.neighbors(node_name) if graph.nodes[n]['type'] == 'VAV']
+                
+                if not connected_vavs or not is_occupied:
+                    node_states[node_name]['supply_temp'] = 20.0
+                    node_states[node_name]['mode'] = 'off'
+                    features[idx, t, :] = [20.0, 0, 0, 0, 0]
+                    continue
+
+                avg_vav_temp = np.mean([node_states[vav]['temp'] for vav in connected_vavs])
+                
+                system_mode = 'off'
+                if avg_vav_temp > setpoints['VAV_temp'] + 0.5:
+                    system_mode = 'cool'
+                elif avg_vav_temp < setpoints['VAV_temp'] - 0.5:
+                    system_mode = 'heat'
+                
+                node_states[node_name]['mode'] = system_mode
+                
+                total_airflow_demand = sum(features[node_map[vav], t, 2] for vav in connected_vavs)
+                fan_speed = min(100, max(20 if is_occupied else 0, total_airflow_demand * 250))
+                static_pressure = 250 * (fan_speed / 100.0)
+                power_draw = 15 * (fan_speed / 100.0)**3
+
+                supply_temp = 20.0 # Default to ambient
+                if system_mode == 'cool':
+                    pump_cw = next((n for n in graph.neighbors(node_name) if 'CW' in n and graph.nodes[n]['type'] == 'Pump'), None)
+                    if pump_cw and t > 0 and features[node_map[pump_cw], t-1, 2] > 1:
+                        supply_temp = setpoints['AHU_supply_temp_cool']
+                elif system_mode == 'heat':
+                    pump_hw = next((n for n in graph.neighbors(node_name) if 'HW' in n and graph.nodes[n]['type'] == 'Pump'), None)
+                    if pump_hw and t > 0 and features[node_map[pump_hw], t-1, 2] > 1:
+                        supply_temp = setpoints['AHU_supply_temp_heat']
+                
+                node_states[node_name]['supply_temp'] = supply_temp
+                features[idx, t, :] = [supply_temp, static_pressure, total_airflow_demand, fan_speed, power_draw]
+
+        for node_name, data in graph.nodes(data=True):
+            if data['type'] in ['Pump', 'Chiller', 'Boiler']:
+                idx = node_map[node_name]
+                
+                is_pump = data['type'] == 'Pump'
+                plant_type = 'Chiller' if (is_pump and 'CW' in node_name) or data['type'] == 'Chiller' else 'Boiler'
+                required_mode = 'cool' if plant_type == 'Chiller' else 'heat'
+                
+                ahus_calling = [ahu for ahu, state in node_states.items() if graph.nodes[ahu]['type'] == 'AHU' and state.get('mode') == required_mode]
+                is_active = len(ahus_calling) > 0
+                
+                anomaly_active = node_name == anomaly_params['node'] and t >= anomaly_params['start_time']
+                
+                if is_pump:
+                    speed = 85 if is_active else 0
+                    if anomaly_active: speed *= 0.2
+                    
+                    pressure_diff = 150 * (speed / 100.0)
+                    flow_rate = 10 * (speed / 100.0)
+                    power = 5 * (speed / 100.0)**2
+                    
+                    source = next((n for n in graph.neighbors(node_name) if graph.nodes[n]['type'] in ['Chiller', 'Boiler']), None)
+                    temp = features[node_map[source], t-1, 0] if t > 0 and source else 20.0
+                    features[idx, t, :] = [temp, pressure_diff, flow_rate, speed, power]
+                
+                else: # Chiller or Boiler
+                    load = 70 if is_active else 0
+                    if anomaly_active: load *= 0.25
+                        
+                    power = 50 * (load / 100.0)
+                    base_temp = setpoints['Chiller_supply_temp'] if data['type'] == 'Chiller' else setpoints['Boiler_supply_temp']
+                    return_temp = base_temp + (5 if data['type'] == 'Chiller' else -10) * (load/100.0)
+                    
+                    pump_node = next(graph.neighbors(node_name))
+                    flow = features[node_map[pump_node], t, 2] if is_active else 0
+                    
+                    features[idx, t, :] = [base_temp, return_temp, flow, load, power]
+
+    return np.nan_to_num(features), anomaly_labels
 
 def standardize_features(feature_list):
     all_features_tensor = torch.cat(feature_list, dim=0)
@@ -127,9 +195,7 @@ def standardize_features(feature_list):
     std = torch.std(all_features_tensor, dim=(0, 1))
     std[std == 0] = 1
     scaler = {'mean': mean, 'std': std}
-    
     standardized_list = [(features - mean) / std for features in feature_list]
-    
     print("✅ Données standardisées (moyenne=0, écart-type=1).")
     return standardized_list, scaler
 

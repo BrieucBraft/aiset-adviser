@@ -7,7 +7,8 @@ from models.st_graph_sage import STGraphSAGE
 from utils.data_loader import (load_and_generate_training_data,
                                load_and_generate_test_data,
                                prepare_data_for_model,
-                               standardize_features)
+                               standardize_features,
+                               FEATURE_MAP, NUM_FEATURES)
 from utils.visualization import (visualize_building_graph,
                                  visualize_supervised_test_data)
 
@@ -17,8 +18,7 @@ def main():
     print("✅ Configuration chargée.")
 
     train_graphs, train_raw_features_list, train_labels_list = load_and_generate_training_data(
-        config['data']['sequence_length'],
-        config['model']['in_channels']
+        config['data']['sequence_length']
     )
     
     train_features_scaled_list, scaler = standardize_features(train_raw_features_list)
@@ -31,7 +31,7 @@ def main():
     print(f"Utilisation du device : {device}")
 
     model = STGraphSAGE(
-        in_channels=config['model']['in_channels'],
+        in_channels=NUM_FEATURES,
         hidden_channels=config['model']['hidden_channels'],
         out_channels=1
     ).to(device)
@@ -69,8 +69,7 @@ def main():
     print(f"💾 Poids du modèle sauvegardés dans : {config['training']['weights_path']}")
 
     test_graph, test_raw_features, test_labels = load_and_generate_test_data(
-        config['data']['sequence_length'],
-        config['model']['in_channels']
+        config['data']['sequence_length']
     )
     
     visualize_building_graph(test_graph, "test_topology.html")
@@ -93,11 +92,12 @@ def main():
     pred_probs_test = torch.sigmoid(pred_logits_test)
     
     visualize_supervised_test_data(
+        test_graph,
         test_raw_features, 
         labels,
         pred_probs_test, 
         inv_node_mapping, 
-        {0: 'Temp', 1: 'Press', 2: 'Flow', 3: 'State'},
+        FEATURE_MAP,
         config['analysis']['anomaly_threshold']
     )
 
