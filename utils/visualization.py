@@ -2,6 +2,7 @@ import networkx as nx
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
+import plotly.colors
 
 def visualize_building_graph(graph: nx.Graph, filename: str = "building_topology.html"):
     os.makedirs("reports", exist_ok=True)
@@ -50,10 +51,19 @@ def visualize_classification_test_data(graph, features, true_labels, pred_classe
     os.makedirs("reports", exist_ok=True)
     output_path = "reports/classification_test_results.html"
     
-    num_nodes, _, _ = features.shape
+    num_nodes, seq_length, _ = features.shape
     node_types = nx.get_node_attributes(graph, 'type')
     inv_anomaly_map = {v: k for k, v in anomaly_types.items()}
-    
+
+    # Define a distinct color for each anomaly type
+    color_palette = plotly.colors.qualitative.Plotly
+    anomaly_colors = {
+        0: 'rgba(0, 176, 80, 0.6)', # Green for NORMAL
+        1: 'rgba(255, 0, 0, 0.6)',   # Red for PUMP_FAILURE
+        2: 'rgba(255, 192, 0, 0.6)',# Orange for SENSOR_STUCK
+        3: 'rgba(112, 48, 160, 0.6)'# Purple for BOILER_LOCKOUT
+    }
+
     fig = make_subplots(
         rows=num_nodes, cols=2,
         shared_xaxes=True,
@@ -70,31 +80,46 @@ def visualize_classification_test_data(graph, features, true_labels, pred_classe
         node_type = node_types.get(node_name)
         feature_names = feature_map_dict.get(node_type, [])
         
+        # --- Left Plot (Features) ---
         for j, feat_name in enumerate(feature_names):
             use_secondary_axis = any(kw in feat_name.lower() for kw in ['pressure', 'power', 'position'])
             fig.add_trace(go.Scatter(
                 y=features[i, :, j], name=feat_name, mode='lines', showlegend=False
             ), row=i+1, col=1, secondary_y=use_secondary_axis)
 
-        true_class_names = [inv_anomaly_map[c.item()] for c in true_labels[i]]
-        pred_class_names = [inv_anomaly_map[c.item()] for c in pred_classes[i]]
+        # --- Right Plot (Anomaly Classification State Chart) ---
+        time_steps = list(range(seq_length))
+        true_classes = true_labels[i].tolist()
+        pred_classes_list = pred_classes[i].tolist()
 
-        fig.add_trace(go.Scatter(
-            y=true_labels[i], text=true_class_names, name='Vraie Classe',
-            mode='lines', line=dict(color='rgba(255, 0, 0, 0.5)', width=6),
-            hoverinfo='text', showlegend=(i==0)
-        ), row=i+1, col=2)
-
-        fig.add_trace(go.Scatter(
-            y=pred_classes[i], text=pred_class_names, name='Classe Prédite',
-            mode='lines', line=dict(color='rgba(0, 0, 255, 0.8)', dash='dash'),
-            hoverinfo='text', showlegend=(i==0)
+        # Add a bar for each time step for the true and predicted class
+        fig.add_trace(go.Bar(
+            x=time_steps, y=[1] * seq_length,
+            name='Vraie Classe',
+            marker_color=[anomaly_colors.get(c, 'grey') for c in true_classes],
+            text=[inv_anomaly_map.get(c, "N/A") for c in true_classes],
+            hoverinfo='text',
+            showlegend=(i==0)
         ), row=i+1, col=2)
         
+        fig.add_trace(go.Bar(
+            x=time_steps, y=[1] * seq_length,
+            name='Classe Prédite',
+            marker_color=[anomaly_colors.get(c, 'grey') for c in pred_classes_list],
+            text=[inv_anomaly_map.get(c, "N/A") for c in pred_classes_list],
+            hoverinfo='text',
+            showlegend=(i==0)
+        ), row=i+1, col=2)
+
+        fig.update_layout(barmode='stack')
+        
+        # Configure the y-axis to be categorical for the state chart
         fig.update_yaxes(
-            tickvals=list(anomaly_types.values()),
-            ticktext=list(anomaly_types.keys()),
-            row=i+1, col=2
+            tickvals=[0.5, 1.5],
+            ticktext=['Vraie', 'Prédite'],
+            row=i+1, col=2,
+            zeroline=False,
+            showgrid=False
         )
         
         fig.update_yaxes(showgrid=False, row=i+1, col=1, secondary_y=False)
