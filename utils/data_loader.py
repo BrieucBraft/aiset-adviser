@@ -85,7 +85,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
             
             node_idx = node_map[anomaly_params['node']]
             anomaly_labels[node_idx, anomaly_params['start_time']:, 0] = 1.0
-            print(f"🔧 Anomalie programmée sur '{anomaly_params['node']}'.")
+            print(f"🔧 Anomalie (ROOT CAUSE) programmée sur '{anomaly_params['node']}'.")
 
     for t in range(seq_length):
         is_occupied = occupancy[t] > 0.1
@@ -123,11 +123,9 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
 
                 avg_vav_temp = np.mean([node_states[vav]['temp'] for vav in connected_vavs])
                 
-                system_mode = 'off'
-                if avg_vav_temp > setpoints['VAV_temp'] + 0.5:
-                    system_mode = 'cool'
-                elif avg_vav_temp < setpoints['VAV_temp'] - 0.5:
-                    system_mode = 'heat'
+                system_mode = node_states[node_name].get('mode', 'off')
+                if avg_vav_temp > setpoints['VAV_temp'] + 0.5: system_mode = 'cool'
+                elif avg_vav_temp < setpoints['VAV_temp'] - 0.5: system_mode = 'heat'
                 
                 node_states[node_name]['mode'] = system_mode
                 
@@ -136,7 +134,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
                 static_pressure = 250 * (fan_speed / 100.0)
                 power_draw = 15 * (fan_speed / 100.0)**3
 
-                supply_temp = 20.0 # Default to ambient
+                supply_temp = 20.0
                 if system_mode == 'cool':
                     pump_cw = next((n for n in graph.neighbors(node_name) if 'CW' in n and graph.nodes[n]['type'] == 'Pump'), None)
                     if pump_cw and t > 0 and features[node_map[pump_cw], t-1, 2] > 1:
@@ -158,7 +156,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
                 required_mode = 'cool' if plant_type == 'Chiller' else 'heat'
                 
                 ahus_calling = [ahu for ahu, state in node_states.items() if graph.nodes[ahu]['type'] == 'AHU' and state.get('mode') == required_mode]
-                is_active = len(ahus_calling) > 0
+                is_active = len(ahus_calling) > 0 and is_occupied
                 
                 anomaly_active = node_name == anomaly_params['node'] and t >= anomaly_params['start_time']
                 
@@ -183,7 +181,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
                     return_temp = base_temp + (5 if data['type'] == 'Chiller' else -10) * (load/100.0)
                     
                     pump_node = next(graph.neighbors(node_name))
-                    flow = features[node_map[pump_node], t, 2] if is_active else 0
+                    flow = features[node_map[pump_node], t, 2] if is_active and t > 0 else 0
                     
                     features[idx, t, :] = [base_temp, return_temp, flow, load, power]
 

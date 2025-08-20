@@ -71,13 +71,13 @@ def visualize_supervised_test_data(graph, features, true_labels, pred_probs, inv
         
         # --- Left Plot (Features) ---
         for j, feat_name in enumerate(feature_names):
-            # Assign features with large values to the secondary y-axis
             use_secondary_axis = any(kw in feat_name.lower() for kw in ['pressure', 'power', 'position'])
             
             fig.add_trace(go.Scatter(
                 y=features[i, :, j],
                 name=feat_name,
                 mode='lines',
+                showlegend=False # <-- Legend for features is now turned off
             ), row=i+1, col=1, secondary_y=use_secondary_axis)
 
         # --- Right Plot (Anomaly Scores) ---
@@ -100,7 +100,6 @@ def visualize_supervised_test_data(graph, features, true_labels, pred_probs, inv
         fig.add_hline(y=threshold, line_dash="dot", line_color="grey", row=i+1, col=2)
         fig.update_yaxes(range=[-0.1, 1.1], row=i+1, col=2, title_text="Probabilité")
         
-        # Configure axes
         fig.update_yaxes(showgrid=False, row=i+1, col=1, secondary_y=False)
         fig.update_yaxes(showgrid=False, row=i+1, col=1, secondary_y=True)
 
