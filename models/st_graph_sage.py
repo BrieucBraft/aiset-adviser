@@ -3,12 +3,17 @@ import torch.nn as nn
 from torch_geometric.nn import SAGEConv
 
 class STGraphSAGE(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels):
+    def __init__(self, in_channels, hidden_channels, out_channels_classification):
         super(STGraphSAGE, self).__init__()
         self.spatial_conv = SAGEConv(in_channels, hidden_channels)
         self.temporal_gru = nn.GRU(hidden_channels, hidden_channels, batch_first=True)
-        self.linear = nn.Linear(hidden_channels, out_channels)
         self.relu = nn.ReLU()
+        
+        # Head for classification (supervised task)
+        self.classification_head = nn.Linear(hidden_channels, out_channels_classification)
+        
+        # Head for reconstruction (unsupervised task)
+        self.reconstruction_head = nn.Linear(hidden_channels, in_channels)
 
     def forward(self, x, edge_index):
         num_nodes, seq_len, _ = x.shape
@@ -23,6 +28,8 @@ class STGraphSAGE(nn.Module):
         
         temporal_output, _ = self.temporal_gru(x_spatially_processed)
         
-        predictions = self.linear(temporal_output)
+        # Get outputs from both heads
+        classification_logits = self.classification_head(temporal_output)
+        reconstructed_features = self.reconstruction_head(temporal_output)
         
-        return predictions
+        return classification_logits, reconstructed_features

@@ -20,11 +20,14 @@ ANOMALY_TYPES = {
     'NORMAL': 0,
     'PUMP_FAILURE': 1,
     'SENSOR_STUCK_VAV': 2,
-    'BOILER_LOCKOUT': 3
+    'BOILER_LOCKOUT': 3,
+    'CHILLER_FAILURE': 4,
+    'DAMPER_STUCK_AHU': 5
 }
 NUM_CLASSES = len(ANOMALY_TYPES)
+UNLABELED_ID = -1
 
-def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75):
+def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75, unlabeled_fraction=0.3):
     print("--- Chargement et génération des données d'entraînement ---")
     training_files = glob.glob("data/training/*.gpickle")
     
@@ -33,10 +36,14 @@ def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75):
         sys.exit(1)
         
     all_graphs, all_features, all_labels = [], [], []
+    num_files_to_generate = len(training_files) * 3
 
-    for file_path in training_files:
+    for i in range(num_files_to_generate):
+        file_path = random.choice(training_files)
         with open(file_path, "rb") as f:
             graph = pickle.load(f)
+            
+            is_unlabeled = random.random() < unlabeled_fraction
             inject_anomaly = random.random() < anomaly_fraction
             anomaly_type = 'NORMAL'
             if inject_anomaly:
@@ -44,12 +51,17 @@ def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75):
 
             features, labels = generate_realistic_time_series_data(graph, seq_length, anomaly_type)
             
+            if is_unlabeled:
+                labels.fill(UNLABELED_ID)
+                status = "non-étiqueté"
+            else:
+                status = f"étiqueté ({anomaly_type})"
+            
             all_graphs.append(graph)
             all_features.append(torch.tensor(features, dtype=torch.float32))
             all_labels.append(torch.tensor(labels, dtype=torch.long))
             
-            status = f"avec anomalie ({anomaly_type})" if inject_anomaly else "sans anomalie"
-            print(f"✅ Données générées pour {os.path.basename(file_path)} ({status})")
+            print(f"✅ Données générées pour {os.path.basename(file_path)} (batch {i+1}, {status})")
             
     return all_graphs, all_features, all_labels
 
@@ -81,8 +93,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
 
     time_of_day = np.linspace(0, 24, seq_length)
     occupancy = np.exp(-((time_of_day - 13.5)**2) / (2 * 2.5**2))
-    occupancy[time_of_day < 7] = 0
-    occupancy[time_of_day > 18] = 0
+    occupancy[time_of_day < 7] = 0; occupancy[time_of_day > 18] = 0
     external_heat_load = occupancy * 8
     
     node_states = {node: {'temp': 18.0} for node in nodes}
@@ -91,15 +102,12 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
     if anomaly_type != 'NORMAL':
         anomaly_params['start_time'] = int(seq_length * (11/24.0))
         
-        if anomaly_type == 'PUMP_FAILURE':
-            target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == 'Pump']
-            if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
-        elif anomaly_type == 'SENSOR_STUCK_VAV':
-            target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == 'VAV']
-            if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
-        elif anomaly_type == 'BOILER_LOCKOUT':
-            target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == 'Boiler']
-            if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
+        target_type = anomaly_type.split('_')[0]
+        if 'VAV' in anomaly_type: target_type = 'VAV'
+        if 'AHU' in anomaly_type: target_type = 'AHU'
+
+        target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == target_type]
+        if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
 
         if anomaly_params['node']:
             node_idx = node_map[anomaly_params['node']]
@@ -138,8 +146,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                 connected_vavs = [n for n in graph.neighbors(node_name) if graph.nodes[n]['type'] == 'VAV']
                 
                 if not connected_vavs or not is_occupied:
-                    node_states[node_name]['supply_temp'] = 20.0
-                    node_states[node_name]['mode'] = 'off'
+                    node_states[node_name] = {'supply_temp': 20.0, 'mode': 'off'}
                     features[idx, t, :] = [20.0, 0, 0, 0, 0]
                     continue
 
@@ -153,6 +160,11 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                 
                 total_airflow_demand = sum(features[node_map[vav], t, 2] for vav in connected_vavs)
                 fan_speed = min(100, max(20 if is_occupied else 0, total_airflow_demand * 250))
+                
+                if anomaly_type == 'DAMPER_STUCK_AHU' and node_name == anomaly_params['node'] and t >= anomaly_params['start_time']:
+                    fan_speed = max(fan_speed, 90)
+                    total_airflow_demand *= 0.3
+
                 static_pressure = 250 * (fan_speed / 100.0)
                 power_draw = 15 * (fan_speed / 100.0)**3
 
@@ -182,29 +194,26 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                 
                 anomaly_active = node_name == anomaly_params['node'] and t >= anomaly_params['start_time']
                 
+                speed = 85 if is_active else 0
+                load = 70 if is_active else 0
+                
                 if is_pump:
-                    speed = 85 if is_active else 0
-                    if anomaly_type == 'PUMP_FAILURE' and anomaly_active: speed *= 0.2
-                    
+                    if anomaly_type == 'PUMP_FAILURE' and anomaly_active: speed = 0
                     pressure_diff = 150 * (speed / 100.0)
                     flow_rate = 10 * (speed / 100.0)
                     power = 5 * (speed / 100.0)**2
-                    
                     source = next((n for n in graph.neighbors(node_name) if graph.nodes[n]['type'] in ['Chiller', 'Boiler']), None)
                     temp = features[node_map[source], t-1, 0] if t > 0 and source else 20.0
                     features[idx, t, :] = [temp, pressure_diff, flow_rate, speed, power]
-                
-                else: # Chiller or Boiler
-                    load = 70 if is_active else 0
+                else:
                     if anomaly_type == 'BOILER_LOCKOUT' and anomaly_active: load = 0
+                    if anomaly_type == 'CHILLER_FAILURE' and anomaly_active: load *= 0.15
                         
                     power = 50 * (load / 100.0)
                     base_temp = setpoints['Chiller_supply_temp'] if data['type'] == 'Chiller' else setpoints['Boiler_supply_temp']
                     return_temp = base_temp + (5 if data['type'] == 'Chiller' else -10) * (load/100.0)
-                    
                     pump_node = next(graph.neighbors(node_name))
                     flow = features[node_map[pump_node], t, 2] if is_active and t > 0 else 0
-                    
                     features[idx, t, :] = [base_temp, return_temp, flow, load, power]
 
     return np.nan_to_num(features), anomaly_labels
