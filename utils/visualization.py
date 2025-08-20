@@ -4,14 +4,11 @@ from plotly.subplots import make_subplots
 import os
 
 def visualize_building_graph(graph: nx.Graph, filename: str = "building_topology.html"):
-    """Crée une visualisation de la topologie et l'enregistre dans un fichier HTML."""
     os.makedirs("reports", exist_ok=True)
     output_path = os.path.join("reports", filename)
 
     pos = nx.spring_layout(graph, seed=42)
-
-    edge_x = []
-    edge_y = []
+    edge_x, edge_y = [], []
     for edge in graph.edges():
         x0, y0 = pos[edge[0]]
         x1, y1 = pos[edge[1]]
@@ -49,75 +46,52 @@ def visualize_building_graph(graph: nx.Graph, filename: str = "building_topology
     fig.write_html(output_path)
     print(f"✅ Visualisation de la topologie enregistrée dans : {output_path}")
 
-def visualize_training_data(full_features, y_pred_unscaled, inv_node_mapping, feature_map):
-    """
-    Visualise la séquence d'entraînement complète (entrée + cible) et superpose les prédictions.
-    """
+def visualize_supervised_test_data(features, true_labels, pred_probs, inv_node_mapping, feature_map, threshold):
     os.makedirs("reports", exist_ok=True)
-    output_path = "reports/training_predictions.html"
-
-    num_nodes, seq_length, num_features = full_features.shape
-
+    output_path = "reports/supervised_test_results.html"
+    
+    num_nodes, seq_length, num_features = features.shape
+    
     fig = make_subplots(
-        rows=num_nodes, cols=num_features,
+        rows=num_nodes, cols=2,
         shared_xaxes=True,
-        subplot_titles=[f"{inv_node_mapping[i]} - {feature_map[j]}" for i in range(num_nodes) for j in range(num_features)]
+        column_widths=[0.7, 0.3],
+        subplot_titles=[
+            title for i in range(num_nodes) 
+            for title in (f"{inv_node_mapping[i]} - Features", f"{inv_node_mapping[i]} - Anomaly Score")
+        ]
     )
 
     for i in range(num_nodes):
         for j in range(num_features):
-            fig.add_trace(go.Scatter(y=full_features[i, :, j], name='Données réelles', mode='lines', line=dict(color='blue'), showlegend=False), row=i+1, col=j+1)
-            prediction_series = [None] + list(y_pred_unscaled[i, :, j])
-            fig.add_trace(go.Scatter(y=prediction_series, name='Prédiction', mode='lines', line=dict(color='orange', dash='dash'), showlegend=False), row=i+1, col=j+1)
+            fig.add_trace(go.Scatter(
+                y=features[i, :, j], 
+                name=feature_map[j],
+                mode='lines',
+                legendgroup=f"node_{i}_features",
+                showlegend=(i==0)
+            ), row=i+1, col=1)
 
-    fig.update_layout(height=250*num_nodes, title_text="📈 Visualisation des Données d'Entraînement et Prédictions")
+        fig.add_trace(go.Scatter(
+            y=true_labels[i].squeeze(), 
+            name='Vraie Anomalie', 
+            mode='lines', 
+            line=dict(color='rgba(255, 0, 0, 0.6)', width=4),
+            legendgroup='anomaly',
+            showlegend=(i==0)
+        ), row=i+1, col=2)
+        
+        fig.add_trace(go.Scatter(
+            y=pred_probs[i].squeeze(), 
+            name='Prédiction (Prob.)', 
+            mode='lines', 
+            line=dict(color='rgba(0, 100, 255, 0.7)', dash='dash'),
+            legendgroup='prediction',
+            showlegend=(i==0)
+        ), row=i+1, col=2)
+
+        fig.add_hline(y=threshold, line_dash="dot", line_color="grey", row=i+1, col=2)
+
+    fig.update_layout(height=250*num_nodes, title_text="📉 Visualisation des Résultats de Test Supervisés")
     fig.write_html(output_path)
-    print(f"✅ Visualisation des données d'entraînement enregistrée dans : {output_path}")
-
-def visualize_test_data(full_features, y_pred_unscaled, inv_node_mapping, feature_map):
-    """
-    Visualise la séquence de test complète et superpose les prédictions du modèle.
-    """
-    os.makedirs("reports", exist_ok=True)
-    output_path = "reports/test_predictions_with_anomaly.html"
-
-    num_nodes, seq_length, num_features = full_features.shape
-
-    fig = make_subplots(
-        rows=num_nodes, cols=num_features,
-        shared_xaxes=True,
-        subplot_titles=[f"{inv_node_mapping[i]} - {feature_map[j]}" for i in range(num_nodes) for j in range(num_features)]
-    )
-
-    for i in range(num_nodes):
-        for j in range(num_features):
-            fig.add_trace(go.Scatter(y=full_features[i, :, j], name='Données réelles (Test)', mode='lines', line=dict(color='green'), showlegend=False), row=i+1, col=j+1)
-            prediction_series = [None] + list(y_pred_unscaled[i, :, j])
-            fig.add_trace(go.Scatter(y=prediction_series, name='Prédiction (Test)', mode='lines', line=dict(color='red', dash='dash'), showlegend=False), row=i+1, col=j+1)
-
-    fig.update_layout(height=250*num_nodes, title_text="📉 Visualisation des Données de Test (avec Anomalie) et Prédictions")
-    fig.write_html(output_path)
-    print(f"✅ Visualisation des données de test enregistrée dans : {output_path}")
-
-def visualize_anomaly_scores(error_per_node, inv_node_mapping, threshold, filename: str = "anomaly_scores.html"):
-    """
-    Crée un bar chart pour visualiser les scores d'anomalie de chaque équipement.
-    """
-    os.makedirs("reports", exist_ok=True)
-    output_path = os.path.join("reports", filename)
-
-    node_names = [inv_node_mapping[i] for i in range(len(error_per_node))]
-    scores = error_per_node.detach().numpy()
-    colors = ['red' if score > threshold else 'green' for score in scores]
-
-    fig = go.Figure([go.Bar(x=node_names, y=scores, marker_color=colors)])
-    fig.add_shape(type="line", x0=-0.5, y0=threshold, x1=len(node_names)-0.5, y1=threshold,
-                  line=dict(color="orange", width=2, dash="dash"))
-
-    fig.update_layout(
-        title=f"📊 Scores d'Anomalie par Équipement ({filename.split('_')[0].capitalize()})",
-        xaxis_title="Équipement",
-        yaxis_title="Erreur de Reconstruction (MSE)",
-    )
-    fig.write_html(output_path)
-    print(f"✅ Scores d'anomalie enregistrés dans : {output_path}")
+    print(f"✅ Visualisation des résultats de test enregistrée dans : {output_path}")

@@ -1,41 +1,61 @@
-# Fichier: utils/data_loader.py
-
 import networkx as nx
 import numpy as np
 import torch
 import os
 import pickle
 import glob
+import sys
+import random
 
-def load_and_generate_training_data(seq_length=48, num_features=4):
+def load_and_generate_training_data(seq_length=48, num_features=4, anomaly_fraction=0.5):
     print("--- Chargement et génération des données d'entraînement ---")
     training_files = glob.glob("data/training/*.gpickle")
-    all_graphs = []
-    all_features = []
+    
+    if not training_files:
+        print("❌ Erreur: Aucun fichier de graphe trouvé dans 'data/training/'.", file=sys.stderr)
+        print("   Veuillez d'abord exécuter 'python -m scripts.generate_graphs'.", file=sys.stderr)
+        sys.exit(1)
+        
+    all_graphs, all_features, all_labels = [], [], []
 
     for file_path in training_files:
         with open(file_path, "rb") as f:
             graph = pickle.load(f)
-            features = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=False)
+            inject_anomaly = random.random() < anomaly_fraction
+            features, labels = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=inject_anomaly)
+            
             all_graphs.append(graph)
             all_features.append(torch.tensor(features, dtype=torch.float32))
-            print(f"✅ Données générées pour {os.path.basename(file_path)}")
+            all_labels.append(torch.tensor(labels, dtype=torch.float32))
             
-    return all_graphs, all_features
+            status = "avec anomalie" if inject_anomaly else "sans anomalie"
+            print(f"✅ Données générées pour {os.path.basename(file_path)} ({status})")
+            
+    return all_graphs, all_features, all_labels
 
 def load_and_generate_test_data(seq_length=48, num_features=4):
     print("\n--- Chargement et génération des données de test ---")
     test_file = "data/testing/test_graph_anomaly.gpickle"
+
+    if not os.path.exists(test_file):
+        print(f"❌ Erreur: Le fichier de test '{test_file}' n'a pas été trouvé.", file=sys.stderr)
+        print("   Veuillez d'abord exécuter 'python -m scripts.generate_graphs'.", file=sys.stderr)
+        sys.exit(1)
+
     with open(test_file, "rb") as f:
         graph = pickle.load(f)
-        features = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=True)
+        features, labels = generate_sample_time_series_data(graph, seq_length, num_features, inject_anomaly=True)
         print(f"✅ Données de test générées pour {os.path.basename(test_file)}")
-        return graph, torch.tensor(features, dtype=torch.float32)
+        return graph, torch.tensor(features, dtype=torch.float32), torch.tensor(labels, dtype=torch.float32)
 
 def generate_sample_time_series_data(graph, seq_length=48, num_features=4, inject_anomaly=False):
     nodes = list(graph.nodes())
+    num_nodes = len(nodes)
     node_map = {name: i for i, name in enumerate(nodes)}
-    features = np.zeros((len(nodes), seq_length, num_features))
+    
+    features = np.zeros((num_nodes, seq_length, num_features))
+    anomaly_labels = np.zeros((num_nodes, seq_length, 1))
+
     time = np.linspace(0, 2 * np.pi, seq_length)
     day_cycle = 0.5 * (1 - np.cos(time))
     on_off_state = (day_cycle > 0.5).astype(float)
@@ -51,7 +71,6 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4, injec
     for i, node_name in enumerate(nodes):
         node_type = graph.nodes[node_name]['type']
         r = ranges[node_type]
-        
         state_signal = on_off_state * r['state'][1] + (np.random.randn(seq_length) * 0.05) * 0.1
         features[i, :, 3] = np.clip(state_signal, r['state'][0], r['state'][1])
 
@@ -81,22 +100,26 @@ def generate_sample_time_series_data(graph, seq_length=48, num_features=4, injec
                 temp_signal = source_range['temp'][0] + (source_range['temp'][1] - source_range['temp'][0]) * day_cycle + temp_noise
             else:
                 temp_signal = np.full(seq_length, 20) + temp_noise
-        
         features[i, :, 0] = temp_signal
 
     if inject_anomaly:
-        pump_to_affect = 'Pump_HW_T1'
-        if pump_to_affect in node_map:
-            pump_hw_index = node_map.get(pump_to_affect)
-            start_anomaly = int(seq_length * 0.5)
-            end_anomaly = int(seq_length * 1)
-            features[pump_hw_index, start_anomaly:end_anomaly, 1] *= 0.1
-            features[pump_hw_index, start_anomaly:end_anomaly, 2] *= 0.1
-            print(f"🔧 Anomalie injectée sur '{pump_to_affect}' (chute de pression/débit).")
-        else:
-            print(f"⚠️  '{pump_to_affect}' non trouvé dans le graphe de test. Aucune anomalie injectée.")
+        possible_nodes = [node for node, data in graph.nodes(data=True) if data['type'] in ['Pump', 'Boiler', 'Chiller']]
+        if not possible_nodes:
+            possible_nodes = list(graph.nodes())
 
-    return features
+        node_to_affect = random.choice(possible_nodes)
+        node_index = node_map.get(node_to_affect)
+        
+        start_anomaly = int(seq_length * random.uniform(0.4, 0.6))
+        end_anomaly = int(seq_length * random.uniform(0.8, 1.0))
+        
+        features[node_index, start_anomaly:end_anomaly, 1] *= random.uniform(0.05, 0.2)
+        features[node_index, start_anomaly:end_anomaly, 2] *= random.uniform(0.05, 0.2)
+        anomaly_labels[node_index, start_anomaly:end_anomaly, 0] = 1.0
+        
+        print(f"🔧 Anomalie injectée sur '{node_to_affect}'.")
+
+    return features, anomaly_labels
 
 def standardize_features(feature_list):
     all_features_tensor = torch.cat(feature_list, dim=0)
@@ -110,10 +133,10 @@ def standardize_features(feature_list):
     print("✅ Données standardisées (moyenne=0, écart-type=1).")
     return standardized_list, scaler
 
-def prepare_data_for_model(graph, node_data):
+def prepare_data_for_model(graph, features, labels):
     node_mapping = {node: i for i, node in enumerate(graph.nodes())}
     edges = [[node_mapping[u], node_mapping[v]] for u, v in graph.edges()]
     edges.extend([[v, u] for u, v in edges])
     edge_index_tensor = torch.tensor(edges, dtype=torch.long).t().contiguous()
     inv_node_mapping = {i: node for node, i in node_mapping.items()}
-    return node_data, edge_index_tensor, inv_node_mapping
+    return features, labels, edge_index_tensor, inv_node_mapping
