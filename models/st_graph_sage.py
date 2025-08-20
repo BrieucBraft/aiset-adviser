@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn import SAGEConv
 
 class STGraphSAGE(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels=1):
+    def __init__(self, in_channels, hidden_channels, out_channels):
         super(STGraphSAGE, self).__init__()
         self.spatial_conv = SAGEConv(in_channels, hidden_channels)
         self.temporal_gru = nn.GRU(hidden_channels, hidden_channels, batch_first=True)

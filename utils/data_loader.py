@@ -16,13 +16,20 @@ FEATURE_MAP = {
 }
 NUM_FEATURES = 5
 
-def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.5):
+ANOMALY_TYPES = {
+    'NORMAL': 0,
+    'PUMP_FAILURE': 1,
+    'SENSOR_STUCK_VAV': 2,
+    'BOILER_LOCKOUT': 3
+}
+NUM_CLASSES = len(ANOMALY_TYPES)
+
+def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75):
     print("--- Chargement et génération des données d'entraînement ---")
     training_files = glob.glob("data/training/*.gpickle")
     
     if not training_files:
         print("❌ Erreur: Aucun fichier de graphe trouvé dans 'data/training/'.", file=sys.stderr)
-        print("   Veuillez d'abord exécuter 'python -m scripts.generate_graphs'.", file=sys.stderr)
         sys.exit(1)
         
     all_graphs, all_features, all_labels = [], [], []
@@ -31,13 +38,17 @@ def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.5):
         with open(file_path, "rb") as f:
             graph = pickle.load(f)
             inject_anomaly = random.random() < anomaly_fraction
-            features, labels = generate_realistic_time_series_data(graph, seq_length, inject_anomaly=inject_anomaly)
+            anomaly_type = 'NORMAL'
+            if inject_anomaly:
+                anomaly_type = random.choice(list(ANOMALY_TYPES.keys())[1:])
+
+            features, labels = generate_realistic_time_series_data(graph, seq_length, anomaly_type)
             
             all_graphs.append(graph)
             all_features.append(torch.tensor(features, dtype=torch.float32))
-            all_labels.append(torch.tensor(labels, dtype=torch.float32))
+            all_labels.append(torch.tensor(labels, dtype=torch.long))
             
-            status = "avec anomalie" if inject_anomaly else "sans anomalie"
+            status = f"avec anomalie ({anomaly_type})" if inject_anomaly else "sans anomalie"
             print(f"✅ Données générées pour {os.path.basename(file_path)} ({status})")
             
     return all_graphs, all_features, all_labels
@@ -48,22 +59,22 @@ def load_and_generate_test_data(seq_length=96):
 
     if not os.path.exists(test_file):
         print(f"❌ Erreur: Le fichier de test '{test_file}' n'a pas été trouvé.", file=sys.stderr)
-        print("   Veuillez d'abord exécuter 'python -m scripts.generate_graphs'.", file=sys.stderr)
         sys.exit(1)
 
     with open(test_file, "rb") as f:
         graph = pickle.load(f)
-        features, labels = generate_realistic_time_series_data(graph, seq_length, inject_anomaly=True)
-        print(f"✅ Données de test générées pour {os.path.basename(test_file)}")
-        return graph, torch.tensor(features, dtype=torch.float32), torch.tensor(labels, dtype=torch.float32)
+        anomaly_type = random.choice(list(ANOMALY_TYPES.keys())[1:])
+        features, labels = generate_realistic_time_series_data(graph, seq_length, anomaly_type)
+        print(f"✅ Données de test générées pour {os.path.basename(test_file)} (Anomalie: {anomaly_type})")
+        return graph, torch.tensor(features, dtype=torch.float32), torch.tensor(labels, dtype=torch.long)
 
-def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=False):
+def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORMAL'):
     nodes = list(graph.nodes())
     node_map = {name: i for i, name in enumerate(nodes)}
     num_nodes = len(nodes)
     
     features = np.full((num_nodes, seq_length, NUM_FEATURES), np.nan)
-    anomaly_labels = np.zeros((num_nodes, seq_length, 1))
+    anomaly_labels = np.zeros((num_nodes, seq_length), dtype=int)
 
     setpoints = {'VAV_temp': 22.0, 'AHU_supply_temp_cool': 12.0, 'AHU_supply_temp_heat': 35.0, 
                  'Chiller_supply_temp': 7.0, 'Boiler_supply_temp': 60.0}
@@ -76,16 +87,24 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
     
     node_states = {node: {'temp': 18.0} for node in nodes}
 
-    anomaly_params = {'node': None, 'start_time': -1}
-    if inject_anomaly:
-        plant_nodes = [n for n, d in graph.nodes(data=True) if d['type'] in ['Pump', 'Chiller', 'Boiler']]
-        if plant_nodes:
-            anomaly_params['node'] = random.choice(plant_nodes)
-            anomaly_params['start_time'] = int(seq_length * (11/24.0)) # Anomaly starts at 11 AM
-            
+    anomaly_params = {'node': None, 'start_time': -1, 'stuck_value': 21.0}
+    if anomaly_type != 'NORMAL':
+        anomaly_params['start_time'] = int(seq_length * (11/24.0))
+        
+        if anomaly_type == 'PUMP_FAILURE':
+            target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == 'Pump']
+            if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
+        elif anomaly_type == 'SENSOR_STUCK_VAV':
+            target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == 'VAV']
+            if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
+        elif anomaly_type == 'BOILER_LOCKOUT':
+            target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == 'Boiler']
+            if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
+
+        if anomaly_params['node']:
             node_idx = node_map[anomaly_params['node']]
-            anomaly_labels[node_idx, anomaly_params['start_time']:, 0] = 1.0
-            print(f"🔧 Anomalie (ROOT CAUSE) programmée sur '{anomaly_params['node']}'.")
+            anomaly_labels[node_idx, anomaly_params['start_time']:] = ANOMALY_TYPES[anomaly_type]
+            print(f"🔧 Anomalie ({anomaly_type}) programmée sur '{anomaly_params['node']}'.")
 
     for t in range(seq_length):
         is_occupied = occupancy[t] > 0.1
@@ -94,9 +113,12 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
             if data['type'] == 'VAV':
                 idx = node_map[node_name]
                 current_temp = node_states[node_name]['temp']
+
+                if anomaly_type == 'SENSOR_STUCK_VAV' and node_name == anomaly_params['node'] and t >= anomaly_params['start_time']:
+                    current_temp = anomaly_params['stuck_value']
+
                 temp_setpoint = setpoints['VAV_temp'] if is_occupied else 18.0
                 temp_error = current_temp - temp_setpoint
-
                 damper_pos = min(100, max(0, 50 + temp_error * 25)) if is_occupied else 0
                 
                 ahu_name = next(graph.neighbors(node_name))
@@ -104,10 +126,10 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
                 airflow = (damper_pos / 100.0) * (ahu_fan_speed / 100.0) * 0.5
 
                 ahu_supply_temp = node_states[ahu_name].get('supply_temp', current_temp)
-                thermal_effect = (current_temp - ahu_supply_temp) * airflow * 0.2
-                current_temp += (external_heat_load[t] * 0.15) - thermal_effect + random.uniform(-0.1, 0.1)
+                thermal_effect = (node_states[node_name]['temp'] - ahu_supply_temp) * airflow * 0.2
+                new_real_temp = node_states[node_name]['temp'] + (external_heat_load[t] * 0.15) - thermal_effect + random.uniform(-0.1, 0.1)
+                node_states[node_name]['temp'] = new_real_temp
 
-                node_states[node_name]['temp'] = current_temp
                 features[idx, t] = [current_temp, damper_pos, airflow, temp_setpoint, 1 if is_occupied else 0]
 
         for node_name, data in graph.nodes(data=True):
@@ -162,7 +184,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
                 
                 if is_pump:
                     speed = 85 if is_active else 0
-                    if anomaly_active: speed *= 0.2
+                    if anomaly_type == 'PUMP_FAILURE' and anomaly_active: speed *= 0.2
                     
                     pressure_diff = 150 * (speed / 100.0)
                     flow_rate = 10 * (speed / 100.0)
@@ -174,7 +196,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, inject_anomaly=Fal
                 
                 else: # Chiller or Boiler
                     load = 70 if is_active else 0
-                    if anomaly_active: load *= 0.25
+                    if anomaly_type == 'BOILER_LOCKOUT' and anomaly_active: load = 0
                         
                     power = 50 * (load / 100.0)
                     base_temp = setpoints['Chiller_supply_temp'] if data['type'] == 'Chiller' else setpoints['Boiler_supply_temp']

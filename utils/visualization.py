@@ -46,12 +46,13 @@ def visualize_building_graph(graph: nx.Graph, filename: str = "building_topology
     fig.write_html(output_path)
     print(f"✅ Visualisation de la topologie enregistrée dans : {output_path}")
 
-def visualize_supervised_test_data(graph, features, true_labels, pred_probs, inv_node_mapping, feature_map_dict, threshold):
+def visualize_classification_test_data(graph, features, true_labels, pred_classes, inv_node_mapping, feature_map_dict, anomaly_types):
     os.makedirs("reports", exist_ok=True)
-    output_path = "reports/supervised_test_results.html"
+    output_path = "reports/classification_test_results.html"
     
     num_nodes, _, _ = features.shape
     node_types = nx.get_node_attributes(graph, 'type')
+    inv_anomaly_map = {v: k for k, v in anomaly_types.items()}
     
     fig = make_subplots(
         rows=num_nodes, cols=2,
@@ -59,7 +60,7 @@ def visualize_supervised_test_data(graph, features, true_labels, pred_probs, inv
         column_widths=[0.75, 0.25],
         subplot_titles=[
             title for i in range(num_nodes)
-            for title in (f"<b>{inv_node_mapping[i]}</b> ({node_types.get(inv_node_mapping[i], '')})", "Anomaly Score")
+            for title in (f"<b>{inv_node_mapping[i]}</b> ({node_types.get(inv_node_mapping[i], '')})", "Anomaly Classification")
         ],
         specs=[[{"secondary_y": True}, {"secondary_y": False}]] * num_nodes
     )
@@ -69,43 +70,39 @@ def visualize_supervised_test_data(graph, features, true_labels, pred_probs, inv
         node_type = node_types.get(node_name)
         feature_names = feature_map_dict.get(node_type, [])
         
-        # --- Left Plot (Features) ---
         for j, feat_name in enumerate(feature_names):
             use_secondary_axis = any(kw in feat_name.lower() for kw in ['pressure', 'power', 'position'])
-            
             fig.add_trace(go.Scatter(
-                y=features[i, :, j],
-                name=feat_name,
-                mode='lines',
-                showlegend=False # <-- Legend for features is now turned off
+                y=features[i, :, j], name=feat_name, mode='lines', showlegend=False
             ), row=i+1, col=1, secondary_y=use_secondary_axis)
 
-        # --- Right Plot (Anomaly Scores) ---
+        true_class_names = [inv_anomaly_map[c.item()] for c in true_labels[i]]
+        pred_class_names = [inv_anomaly_map[c.item()] for c in pred_classes[i]]
+
         fig.add_trace(go.Scatter(
-            y=true_labels[i].squeeze(),
-            name='Vraie Anomalie',
-            mode='lines',
-            line=dict(color='rgba(255, 0, 0, 0.5)', width=6),
-            showlegend=(i==0)
+            y=true_labels[i], text=true_class_names, name='Vraie Classe',
+            mode='lines', line=dict(color='rgba(255, 0, 0, 0.5)', width=6),
+            hoverinfo='text', showlegend=(i==0)
         ), row=i+1, col=2)
 
         fig.add_trace(go.Scatter(
-            y=pred_probs[i].squeeze(),
-            name='Prédiction (Prob.)',
-            mode='lines',
-            line=dict(color='rgba(0, 0, 255, 0.8)', dash='dash'),
-            showlegend=(i==0)
+            y=pred_classes[i], text=pred_class_names, name='Classe Prédite',
+            mode='lines', line=dict(color='rgba(0, 0, 255, 0.8)', dash='dash'),
+            hoverinfo='text', showlegend=(i==0)
         ), row=i+1, col=2)
         
-        fig.add_hline(y=threshold, line_dash="dot", line_color="grey", row=i+1, col=2)
-        fig.update_yaxes(range=[-0.1, 1.1], row=i+1, col=2, title_text="Probabilité")
+        fig.update_yaxes(
+            tickvals=list(anomaly_types.values()),
+            ticktext=list(anomaly_types.keys()),
+            row=i+1, col=2
+        )
         
         fig.update_yaxes(showgrid=False, row=i+1, col=1, secondary_y=False)
         fig.update_yaxes(showgrid=False, row=i+1, col=1, secondary_y=True)
 
     fig.update_layout(
         height=350*num_nodes, 
-        title_text="<b>📉 Visualisation des Résultats de Test Supervisés</b>",
+        title_text="<b>📉 Visualisation des Résultats de Classification d'Anomalies</b>",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig.write_html(output_path)

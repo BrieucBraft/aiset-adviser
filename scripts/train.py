@@ -2,15 +2,16 @@ import torch
 import torch.nn.functional as F
 import yaml
 import os
+import numpy as np
 
 from models.st_graph_sage import STGraphSAGE
 from utils.data_loader import (load_and_generate_training_data,
                                load_and_generate_test_data,
                                prepare_data_for_model,
                                standardize_features,
-                               FEATURE_MAP, NUM_FEATURES)
+                               FEATURE_MAP, NUM_FEATURES, NUM_CLASSES, ANOMALY_TYPES)
 from utils.visualization import (visualize_building_graph,
-                                 visualize_supervised_test_data)
+                                 visualize_classification_test_data)
 
 def main():
     with open("config.yaml", 'r') as f:
@@ -33,11 +34,11 @@ def main():
     model = STGraphSAGE(
         in_channels=NUM_FEATURES,
         hidden_channels=config['model']['hidden_channels'],
-        out_channels=1
+        out_channels=NUM_CLASSES
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config['training']['learning_rate'])
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+    loss_fn = torch.nn.CrossEntropyLoss()
 
     print("\n--- 🚀 Début de l'entraînement ---")
     model.train()
@@ -54,7 +55,8 @@ def main():
 
             optimizer.zero_grad()
             pred_logits = model(X_train, edge_index)
-            loss = loss_fn(pred_logits, y_train_labels)
+            
+            loss = loss_fn(pred_logits.view(-1, NUM_CLASSES), y_train_labels.view(-1))
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -89,30 +91,33 @@ def main():
     with torch.no_grad():
         pred_logits_test = model(X_test, edge_index).cpu()
     
-    pred_probs_test = torch.sigmoid(pred_logits_test)
+    pred_probs_test = F.softmax(pred_logits_test, dim=2)
+    pred_classes_test = torch.argmax(pred_probs_test, dim=2)
     
-    visualize_supervised_test_data(
+    visualize_classification_test_data(
         test_graph,
         test_raw_features, 
         labels,
-        pred_probs_test, 
+        pred_classes_test, 
         inv_node_mapping, 
         FEATURE_MAP,
-        config['analysis']['anomaly_threshold']
+        ANOMALY_TYPES
     )
 
     print("\n--- 🔥 Analyse des détections ---")
-    for i in range(pred_probs_test.shape[0]):
+    inv_anomaly_map = {v: k for k, v in ANOMALY_TYPES.items()}
+    for i in range(pred_classes_test.shape[0]):
         node_name = inv_node_mapping[i]
-        true_anomalies = labels[i].sum() > 0
-        detected_anomalies = (pred_probs_test[i] > config['analysis']['anomaly_threshold']).sum() > 0
+        true_anomaly_class = labels[i, -1].item()
+        pred_anomaly_class = pred_classes_test[i, -1].item()
 
-        if true_anomalies and detected_anomalies:
-            print(f"✅ Succès: Anomalie correctement détectée sur {node_name}")
-        elif true_anomalies and not detected_anomalies:
-            print(f"❌ Échec: Anomalie MANQUÉE sur {node_name} (faux négatif)")
-        elif not true_anomalies and detected_anomalies:
-            print(f"⚠️ Attention: Fausse alerte sur {node_name} (faux positif)")
+        if true_anomaly_class != 0:
+            true_class_name = inv_anomaly_map[true_anomaly_class]
+            pred_class_name = inv_anomaly_map[pred_anomaly_class]
+            if true_anomaly_class == pred_anomaly_class:
+                print(f"✅ Succès: Anomalie '{true_class_name}' correctement classifiée sur {node_name}")
+            else:
+                print(f"❌ Échec: Anomalie '{true_class_name}' sur {node_name} classifiée comme '{pred_class_name}'")
 
 if __name__ == '__main__':
     main()
