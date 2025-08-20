@@ -27,6 +27,14 @@ ANOMALY_TYPES = {
 NUM_CLASSES = len(ANOMALY_TYPES)
 UNLABELED_ID = -1
 
+ANOMALY_TARGET_MAP = {
+    'PUMP_FAILURE': 'Pump',
+    'SENSOR_STUCK_VAV': 'VAV',
+    'BOILER_LOCKOUT': 'Boiler',
+    'CHILLER_FAILURE': 'Chiller',
+    'DAMPER_STUCK_AHU': 'AHU',
+}
+
 def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75, unlabeled_fraction=0.3):
     print("--- Chargement et génération des données d'entraînement ---")
     training_files = glob.glob("data/training/*.gpickle")
@@ -36,7 +44,7 @@ def load_and_generate_training_data(seq_length=96, anomaly_fraction=0.75, unlabe
         sys.exit(1)
         
     all_graphs, all_features, all_labels = [], [], []
-    num_files_to_generate = len(training_files) * 3
+    num_files_to_generate = len(training_files) * 10
 
     for i in range(num_files_to_generate):
         file_path = random.choice(training_files)
@@ -102,12 +110,14 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
     if anomaly_type != 'NORMAL':
         anomaly_params['start_time'] = int(seq_length * (11/24.0))
         
-        target_type = anomaly_type.split('_')[0]
-        if 'VAV' in anomaly_type: target_type = 'VAV'
-        if 'AHU' in anomaly_type: target_type = 'AHU'
+        target_type = ANOMALY_TARGET_MAP.get(anomaly_type)
 
-        target_nodes = [n for n, d in graph.nodes(data=True) if d['type'] == target_type]
-        if target_nodes: anomaly_params['node'] = random.choice(target_nodes)
+        target_nodes = []
+        if target_type:
+            target_nodes = [n for n, d in graph.nodes(data=True) if d.get('type') == target_type]
+
+        if target_nodes: 
+            anomaly_params['node'] = random.choice(target_nodes)
 
         if anomaly_params['node']:
             node_idx = node_map[anomaly_params['node']]
@@ -118,7 +128,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
         is_occupied = occupancy[t] > 0.1
         
         for node_name, data in graph.nodes(data=True):
-            if data['type'] == 'VAV':
+            if data.get('type') == 'VAV':
                 idx = node_map[node_name]
                 current_temp = node_states[node_name]['temp']
 
@@ -141,9 +151,9 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                 features[idx, t] = [current_temp, damper_pos, airflow, temp_setpoint, 1 if is_occupied else 0]
 
         for node_name, data in graph.nodes(data=True):
-            if data['type'] == 'AHU':
+            if data.get('type') == 'AHU':
                 idx = node_map[node_name]
-                connected_vavs = [n for n in graph.neighbors(node_name) if graph.nodes[n]['type'] == 'VAV']
+                connected_vavs = [n for n in graph.neighbors(node_name) if graph.nodes[n].get('type') == 'VAV']
                 
                 if not connected_vavs or not is_occupied:
                     node_states[node_name] = {'supply_temp': 20.0, 'mode': 'off'}
@@ -170,11 +180,11 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
 
                 supply_temp = 20.0
                 if system_mode == 'cool':
-                    pump_cw = next((n for n in graph.neighbors(node_name) if 'CW' in n and graph.nodes[n]['type'] == 'Pump'), None)
+                    pump_cw = next((n for n in graph.neighbors(node_name) if 'CW' in n and graph.nodes[n].get('type') == 'Pump'), None)
                     if pump_cw and t > 0 and features[node_map[pump_cw], t-1, 2] > 1:
                         supply_temp = setpoints['AHU_supply_temp_cool']
                 elif system_mode == 'heat':
-                    pump_hw = next((n for n in graph.neighbors(node_name) if 'HW' in n and graph.nodes[n]['type'] == 'Pump'), None)
+                    pump_hw = next((n for n in graph.neighbors(node_name) if 'HW' in n and graph.nodes[n].get('type') == 'Pump'), None)
                     if pump_hw and t > 0 and features[node_map[pump_hw], t-1, 2] > 1:
                         supply_temp = setpoints['AHU_supply_temp_heat']
                 
@@ -182,14 +192,14 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                 features[idx, t, :] = [supply_temp, static_pressure, total_airflow_demand, fan_speed, power_draw]
 
         for node_name, data in graph.nodes(data=True):
-            if data['type'] in ['Pump', 'Chiller', 'Boiler']:
+            if data.get('type') in ['Pump', 'Chiller', 'Boiler']:
                 idx = node_map[node_name]
                 
-                is_pump = data['type'] == 'Pump'
-                plant_type = 'Chiller' if (is_pump and 'CW' in node_name) or data['type'] == 'Chiller' else 'Boiler'
+                is_pump = data.get('type') == 'Pump'
+                plant_type = 'Chiller' if (is_pump and 'CW' in node_name) or data.get('type') == 'Chiller' else 'Boiler'
                 required_mode = 'cool' if plant_type == 'Chiller' else 'heat'
                 
-                ahus_calling = [ahu for ahu, state in node_states.items() if graph.nodes[ahu]['type'] == 'AHU' and state.get('mode') == required_mode]
+                ahus_calling = [ahu for ahu, state in node_states.items() if graph.nodes[ahu].get('type') == 'AHU' and state.get('mode') == required_mode]
                 is_active = len(ahus_calling) > 0 and is_occupied
                 
                 anomaly_active = node_name == anomaly_params['node'] and t >= anomaly_params['start_time']
@@ -202,7 +212,7 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                     pressure_diff = 150 * (speed / 100.0)
                     flow_rate = 10 * (speed / 100.0)
                     power = 5 * (speed / 100.0)**2
-                    source = next((n for n in graph.neighbors(node_name) if graph.nodes[n]['type'] in ['Chiller', 'Boiler']), None)
+                    source = next((n for n in graph.neighbors(node_name) if graph.nodes[n].get('type') in ['Chiller', 'Boiler']), None)
                     temp = features[node_map[source], t-1, 0] if t > 0 and source else 20.0
                     features[idx, t, :] = [temp, pressure_diff, flow_rate, speed, power]
                 else:
@@ -210,8 +220,8 @@ def generate_realistic_time_series_data(graph, seq_length=96, anomaly_type='NORM
                     if anomaly_type == 'CHILLER_FAILURE' and anomaly_active: load *= 0.15
                         
                     power = 50 * (load / 100.0)
-                    base_temp = setpoints['Chiller_supply_temp'] if data['type'] == 'Chiller' else setpoints['Boiler_supply_temp']
-                    return_temp = base_temp + (5 if data['type'] == 'Chiller' else -10) * (load/100.0)
+                    base_temp = setpoints['Chiller_supply_temp'] if data.get('type') == 'Chiller' else setpoints['Boiler_supply_temp']
+                    return_temp = base_temp + (5 if data.get('type') == 'Chiller' else -10) * (load/100.0)
                     pump_node = next(graph.neighbors(node_name))
                     flow = features[node_map[pump_node], t, 2] if is_active and t > 0 else 0
                     features[idx, t, :] = [base_temp, return_temp, flow, load, power]
