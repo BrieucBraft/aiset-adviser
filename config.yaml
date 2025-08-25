@@ -4,11 +4,9 @@ model:
 
 # Paramètres de l'entraînement
 training:
-  epochs: 1000
+  epochs: 100
   learning_rate: 0.002
   weights_path: "weights/st_graph_sage_v1.pth"
-  train_split_ratio: 0.75 # 75% des données pour l'entraînement
-  loss_lambda: 0.2 # Poids pour la perte de classification semi-supervisée
 
 # Paramètres des données
 data:
