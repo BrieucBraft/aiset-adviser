@@ -1,13 +1,11 @@
 # Paramètres du modèle
 model:
-  in_channels: 4
   hidden_channels: 64
-  out_channels: 4
 
 # Paramètres de l'entraînement
 training:
-  epochs: 150 # Augmenté pour une meilleure convergence
-  learning_rate: 0.005
+  epochs: 1000
+  learning_rate: 0.002
   weights_path: "weights/st_graph_sage_v1.pth"
   train_split_ratio: 0.75 # 75% des données pour l'entraînement
   loss_lambda: 0.2 # Poids pour la perte de classification semi-supervisée
@@ -18,4 +16,4 @@ data:
 
 # Paramètres de l'analyse d'anomalies
 analysis:
-  anomaly_threshold: 0.05
+  anomaly_threshold: 0.2

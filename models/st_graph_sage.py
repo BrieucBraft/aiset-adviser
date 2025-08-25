@@ -4,42 +4,34 @@ import torch.nn as nn
 from torch_geometric.nn import SAGEConv
 
 class STGraphSAGE(nn.Module):
-    """Modèle Spatio-Temporel avec deux têtes de sortie pour l'apprentissage semi-supervisé."""
-    def __init__(self, in_channels, hidden_channels, out_channels):
+    def __init__(self, in_channels, hidden_channels, out_channels_classification):
         super(STGraphSAGE, self).__init__()
         # Couches partagées
         self.spatial_conv = SAGEConv(in_channels, hidden_channels)
-        self.temporal_gru = nn.GRU(hidden_channels, hidden_channels)
+        self.temporal_gru = nn.GRU(hidden_channels, hidden_channels, batch_first=True)
         self.relu = nn.ReLU()
         
-        # Tête de sortie 1: Reconstruction
-        self.reconstruction_head = nn.Linear(hidden_channels, out_channels)
+        # Head for classification (supervised task)
+        self.classification_head = nn.Linear(hidden_channels, out_channels_classification)
         
-        # Tête de sortie 2: Classification (prédit un score d'anomalie)
-        self.classification_head = nn.Sequential(
-            nn.Linear(hidden_channels, hidden_channels // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_channels // 2, 1),
-            nn.Sigmoid() # Pour borner le score entre 0 (normal) et 1 (anormal)
-        )
+        # Head for reconstruction (unsupervised task)
+        self.reconstruction_head = nn.Linear(hidden_channels, in_channels)
 
     def forward(self, x, edge_index):
-        h = None
-        reconstructions = []
-        classifications = []
+        num_nodes, seq_len, _ = x.shape
         
-        for t in range(x.size(1)):
+        spatial_embeddings = []
+        for t in range(seq_len):
             x_t = x[:, t, :]
-            spatial_embedding = self.relu(self.spatial_conv(x_t, edge_index))
-            r_in = spatial_embedding.unsqueeze(0)
-            temporal_output, h = self.temporal_gru(r_in, h)
-            hidden_state_t = temporal_output.squeeze(0)
-            
-            # Passer l'état caché dans les deux têtes
-            reconstructions.append(self.reconstruction_head(hidden_state_t))
-            classifications.append(self.classification_head(hidden_state_t))
-            
-        reconstruction_output = torch.stack(reconstructions, dim=1)
-        classification_output = torch.stack(classifications, dim=1).squeeze(-1) # Enlever la dernière dimension
+            spatial_embedding_t = self.relu(self.spatial_conv(x_t, edge_index))
+            spatial_embeddings.append(spatial_embedding_t)
         
-        return reconstruction_output, classification_output
+        x_spatially_processed = torch.stack(spatial_embeddings, dim=1)
+        
+        temporal_output, _ = self.temporal_gru(x_spatially_processed)
+        
+        # Get outputs from both heads
+        classification_logits = self.classification_head(temporal_output)
+        reconstructed_features = self.reconstruction_head(temporal_output)
+        
+        return classification_logits, reconstructed_features
